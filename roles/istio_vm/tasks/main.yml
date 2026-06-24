@@ -1,12 +1,13 @@
 ---
-- name: VM Proxy | Update Apt Cache
+- name: VM Proxy | Update Apt Cache (Debian)
   ansible.builtin.apt:
     update_cache: true
   ignore_errors: true
+  when: ansible_os_family == "Debian"
   tags:
     - vm_proxy
 
-- name: VM Proxy | Install Prerequisites
+- name: VM Proxy | Install Prerequisites (Debian)
   ansible.builtin.apt:
     name:
       - curl
@@ -16,12 +17,52 @@
       - iptables
       - iproute2
     state: present
+  when: ansible_os_family == "Debian"
   tags:
     - vm_proxy
 
-- name: VM Proxy | Install Nginx Application Runtime
+- name: VM Proxy | Install Prerequisites (RedHat)
+  ansible.builtin.dnf:
+    name:
+      - curl
+      - wget
+      - ca-certificates
+      - iptables
+      - iproute
+    state: present
+  when: ansible_os_family == "RedHat"
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Install Nginx Application Runtime (Debian)
   ansible.builtin.apt:
     name: nginx
+    state: present
+  when: ansible_os_family == "Debian"
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Install Nginx Application Runtime (RedHat)
+  ansible.builtin.dnf:
+    name: nginx
+    state: present
+  when: ansible_os_family == "RedHat"
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Create istio-proxy group
+  ansible.builtin.group:
+    name: istio-proxy
+    state: present
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Create istio-proxy user
+  ansible.builtin.user:
+    name: istio-proxy
+    group: istio-proxy
+    shell: /usr/sbin/nologin
+    system: true
     state: present
   tags:
     - vm_proxy
@@ -38,15 +79,41 @@
     url: "https://storage.googleapis.com/istio-release/releases/{{ istio_version }}/deb/istio-sidecar.deb"
     dest: /tmp/istio-sidecar.deb
     mode: '0644'
-  when: not istio_installed.stat.exists
+  when:
+    - not istio_installed.stat.exists
+    - ansible_os_family == "Debian"
   tags:
     - vm_proxy
 
-- name: VM Proxy | Install Istio Sidecar Package
+- name: VM Proxy | Download Istio Sidecar RPM Package
+  ansible.builtin.get_url:
+    url: "https://storage.googleapis.com/istio-release/releases/{{ istio_version }}/rpm/istio-sidecar.rpm"
+    dest: /tmp/istio-sidecar.rpm
+    mode: '0644'
+  when:
+    - not istio_installed.stat.exists
+    - ansible_os_family == "RedHat"
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Install Istio Sidecar Package (Debian)
   ansible.builtin.apt:
     deb: /tmp/istio-sidecar.deb
     state: present
-  when: not istio_installed.stat.exists
+  when:
+    - not istio_installed.stat.exists
+    - ansible_os_family == "Debian"
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Install Istio Sidecar Package (RedHat)
+  ansible.builtin.dnf:
+    name: /tmp/istio-sidecar.rpm
+    disable_gpg_check: true
+    state: present
+  when:
+    - not istio_installed.stat.exists
+    - ansible_os_family == "RedHat"
   tags:
     - vm_proxy
 
