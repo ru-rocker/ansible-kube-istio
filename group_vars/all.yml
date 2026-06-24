@@ -22,3 +22,10 @@ istio_cni_enabled: true
 vm_service_account_name: "vm-proxy-sa"
 vm_namespace: "mesh-services"
 vm_canonical_service: "nginx-vm-proxy"
+vm_service_cidr: "*"
+vm_network: "vm-network"
+vm_inbound_ports: "80"
+vm_auto_register_group: "vm-proxy-group"
+vm_dns_capture: true
+vm_dns_auto_allocate: true
+vm_bootstrap_port: 30185

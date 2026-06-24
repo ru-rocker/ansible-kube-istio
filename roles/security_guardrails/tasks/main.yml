@@ -72,7 +72,7 @@
       apiVersion: networking.istio.io/v1
       kind: WorkloadGroup
       metadata:
-        name: vm-proxy-group
+        name: "{{ vm_auto_register_group }}"
         namespace: "{{ vm_namespace }}"
       spec:
         metadata:
@@ -80,13 +80,13 @@
             app: vm-proxy
             version: v1
           annotations:
-            traffic.sidecar.istio.io/includeInboundPorts: "80"
+            traffic.sidecar.istio.io/includeInboundPorts: "{{ vm_inbound_ports }}"
             traffic.sidecar.istio.io/excludeInboundPorts: "22"
         template:
           serviceAccount: "{{ vm_service_account_name }}"
-          network: vm-network
+          network: "{{ vm_network }}"
           ports:
-            http: 80
+            http: "{{ vm_inbound_ports | int }}"
   when: inventory_hostname in groups['control_plane']
   tags:
     - security

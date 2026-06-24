@@ -32,6 +32,7 @@ spec:
     - source:
         principals:
         - "cluster.local/ns/mesh-services/sa/default"
+        - "cluster.local/ns/mesh-services/sa/vm-proxy-sa"
     to:
     - operation:
         ports: ["80"]
