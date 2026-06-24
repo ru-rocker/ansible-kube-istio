@@ -33,6 +33,7 @@ spec:
         principals:
         - "cluster.local/ns/mesh-services/sa/default"
         - "cluster.local/ns/mesh-services/sa/vm-proxy-sa"
+        - "cluster.local/ns/meshz-services/sa/default"
     to:
     - operation:
         ports: ["80"]

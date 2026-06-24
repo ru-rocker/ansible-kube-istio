@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-service
+  namespace: meshz-services
+  labels:
+    app: client-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client-service
+  template:
+    metadata:
+      labels:
+        app: client-service
+    spec:
+      containers:
+      - name: client-service
+        image: curlimages/curl:8.5.0
+        command: ["/bin/sh", "-c", "while true; do sleep 3600; done"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-service
+  namespace: meshz-services
+spec:
+  selector:
+    app: client-service
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80

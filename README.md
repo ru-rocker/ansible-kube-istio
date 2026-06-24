@@ -270,6 +270,24 @@ ssh root@188.166.183.114 "curl -s http://order-service.mesh-services.svc.cluster
 ```
 *(Under the hood, the VM's local `systemd-resolved` forwards DNS queries for `*.cluster.local` to Envoy's local DNS capture port `15053`. Envoy resolves the hostname and intercepts the TCP connection, routing it to the cluster's East-West gateway on port 15443. The Gateway performs SNI routing to pass the mTLS connection directly to the target pod sidecar).*
 
+### 4. Ambient-to-VM (ambient-vm) [KNOWN LIMITATION]
+This scenario tests communication from a sidecarless workload running in an Ambient-enabled namespace (`meshz-services`) to a VM workload running in a traditional sidecar-enabled namespace (`mesh-services`).
+
+Exec into the `client-service` pod in the `meshz-services` namespace and curl the VM service:
+```bash
+kubectl exec -n meshz-services deploy/client-service -- curl -s http://vm-proxy.mesh-services.svc.cluster.local/
+```
+
+**Expected Output:**
+```text
+command terminated with exit code 56 (Connection reset by peer)
+```
+
+**Description:**
+This failure is a known architectural limitation of hybrid Ambient-Sidecar meshes. The Layer 4 `ztunnel` in the client's Ambient namespace does not support resolving or routing to service endpoints backed by custom `WorkloadEntry` resources. Checking the client node's `ztunnel` logs will show:
+`warn access connection failed [...] error="no service for target address: <vm-proxy-cluster-ip>:80"`.
+For VM connectivity to work, target workloads must remain in standard Sidecar Mode (`istio-injection: enabled`).
+
 ---
 
 ## Additional Documentation
