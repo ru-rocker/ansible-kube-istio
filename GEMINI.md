@@ -66,6 +66,8 @@ ansible-kube-istio/
 ├── group_vars/
 │   └── all.yml                 # Configuration variables (versions, thresholds)
 ├── site.yml                    # Main entrypoint playbook
+├── docs/
+│   └── vm-ambient-compatibility.md # Ambient VM compatibility documentation
 └── roles/
     ├── preflight/              # Pre-checks role
     ├── kubernetes/             # Kubeadm setup role

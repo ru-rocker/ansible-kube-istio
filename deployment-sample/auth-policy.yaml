@@ -35,3 +35,23 @@ spec:
     to:
     - operation:
         ports: ["80"]
+---
+# Note: Since the VM connects to the control plane through a NAT gateway,
+# istiod cannot resolve workload labels (like app: vm-proxy) on its connection.
+# Therefore, we omit the selector field so that this ALLOW policy applies
+# to all workloads in the namespace, including the VM proxy.
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: vm-proxy-policy
+  namespace: mesh-services
+spec:
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/mesh-services/sa/default"
+    to:
+    - operation:
+        ports: ["80"]

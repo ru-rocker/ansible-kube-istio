@@ -36,7 +36,7 @@
     - security
     - guardrails
 
-- name: Security Guardrails | Enable Istio Ambient Dataplane Mode on Target Namespace
+- name: Security Guardrails | Enable Istio Sidecar Injection on Target Namespace
   kubernetes.core.k8s:
     state: present
     definition:
@@ -45,7 +45,7 @@
       metadata:
         name: "{{ vm_namespace }}"
         labels:
-          istio.io/dataplane-mode: ambient
+          istio-injection: enabled
   when: inventory_hostname in groups['control_plane']
   tags:
     - security
