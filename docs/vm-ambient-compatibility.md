@@ -29,6 +29,11 @@ Running a hybrid mesh (Kubernetes in Ambient, VM in Sidecar) exposes several dee
 * **Targeting Mismatch:** When a namespace is labeled `istio.io/dataplane-mode: ambient`, `istiod` configures the security policies (like `AuthorizationPolicy`) to be consumed by the namespace's `ztunnels` and `waypoint` proxies rather than sidecars.
 * **RBAC Denials:** Because the VM proxy runs as a standard sidecar Envoy, it connects to XDS but fails to receive the authorization rules targeting its specific selector (since the control plane maps these rules to `ztunnels`). As a result, the VM proxy falls back to a global default-deny posture and returns `403 Forbidden` (RBAC access denied) for inbound traffic.
 
+### 4. Live Verification Test Gaps
+During active verification of a hybrid mesh (Kubernetes namespace in Ambient Mode, VM in Sidecar Mode), the following L4/L7 translation gaps were observed:
+* **Outbound routing to VM fails (Kube-to-VM)**: Pod to VM connections return `Empty reply from server` (exit code 52). Ztunnel does not support resolving or routing to service endpoints backed purely by custom `WorkloadEntry` resources. Ztunnel logs: `warn access connection failed [...] error="no service for target address"`.
+* **Inbound routing to Kube fails (VM-to-Kube)**: VM to pod connections fail with `503 Service Unavailable (no healthy upstream)` at the gateway. The gateway routes standard TLS/mTLS to the pod IP directly on port 80. However, in STRICT mTLS Ambient Mode, the pod's ztunnel expects HBONE-encapsulated traffic (tunneling via port 15008) and rejects standard sidecar mTLS handshakes on port 80.
+
 ---
 
 ## Recommended Alternatives
