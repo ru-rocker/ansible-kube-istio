@@ -1,0 +1,24 @@
+---
+# System Guardrail Thresholds
+min_ram_mb: 900
+min_cpu_cores: 1
+min_disk_gb: 10
+disable_swap_automatically: true
+
+# Kubernetes Configuration
+kubernetes_minor_version: "v1.31"
+kubernetes_version: "1.31.0"
+pod_network_cidr: "10.244.0.0/16"
+control_plane_endpoint: "{{ hostvars[groups['control_plane'][0]]['ansible_host'] }}:6443"
+
+# Istio Configuration
+istio_version: "1.29.4"
+istio_profile: "default"
+enforce_strict_mtls: true
+enable_default_deny: true
+istio_cni_enabled: true
+
+# VM Sidecar Proxy Configuration
+vm_service_account_name: "vm-proxy-sa"
+vm_namespace: "mesh-services"
+vm_canonical_service: "nginx-vm-proxy"

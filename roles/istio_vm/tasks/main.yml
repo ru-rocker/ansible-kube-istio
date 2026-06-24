@@ -1,0 +1,228 @@
+---
+- name: VM Proxy | Update Apt Cache
+  ansible.builtin.apt:
+    update_cache: true
+  ignore_errors: true
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Install Prerequisites
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - gnupg
+      - ca-certificates
+      - iptables
+      - iproute2
+    state: present
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Install Nginx Application Runtime
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Check if Istio Sidecar is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/pilot-agent
+  register: istio_installed
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Download Istio Sidecar Debian Package
+  ansible.builtin.get_url:
+    url: "https://storage.googleapis.com/istio-release/releases/{{ istio_version }}/deb/istio-sidecar.deb"
+    dest: /tmp/istio-sidecar.deb
+    mode: '0644'
+  when: not istio_installed.stat.exists
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Install Istio Sidecar Package
+  ansible.builtin.apt:
+    deb: /tmp/istio-sidecar.deb
+    state: present
+  when: not istio_installed.stat.exists
+  tags:
+    - vm_proxy
+
+
+# --------------------------------------------------------------------------
+# Dynamic Credential & Certificate Generation
+# --------------------------------------------------------------------------
+
+- name: VM Proxy | Extract Istio Root Certificate from Cluster
+  ansible.builtin.shell: >
+    kubectl get configmap istio-ca-root-cert -n {{ vm_namespace }}
+    -o jsonpath='{.data.root-cert\.pem}'
+  register: root_cert_raw
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  changed_when: false
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Generate Workload Token on Control Plane
+  ansible.builtin.command: >
+    kubectl create token {{ vm_service_account_name }}
+    --audience istio-ca
+    --namespace {{ vm_namespace }}
+    --duration 86400s
+  register: workload_token_raw
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  changed_when: false
+  tags:
+    - vm_proxy
+
+# --------------------------------------------------------------------------
+# Create Directories & Deploy Credentials
+# --------------------------------------------------------------------------
+
+- name: VM Proxy | Create Istio Config Directory
+  ansible.builtin.file:
+    path: /etc/istio
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Create Istio Certs Directory
+  ansible.builtin.file:
+    path: /etc/certs
+    state: directory
+    owner: istio-proxy
+    group: istio-proxy
+    mode: '0700'
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Ensure Token Directory Exists
+  ansible.builtin.file:
+    path: /var/run/secrets/tokens
+    state: directory
+    owner: istio-proxy
+    group: istio-proxy
+    mode: '0700'
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Deploy Root Certificate
+  ansible.builtin.copy:
+    content: "{{ root_cert_raw.stdout }}"
+    dest: /etc/certs/root-cert.pem
+    owner: istio-proxy
+    group: istio-proxy
+    mode: '0644'
+  notify: restart istio
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Deploy Istio Token
+  ansible.builtin.copy:
+    content: "{{ workload_token_raw.stdout }}"
+    dest: /var/run/secrets/tokens/istio-token
+    owner: istio-proxy
+    group: istio-proxy
+    mode: '0600'
+  notify: restart istio
+  tags:
+    - vm_proxy
+
+# --------------------------------------------------------------------------
+# Template Configurations
+# --------------------------------------------------------------------------
+
+- name: VM Proxy | Add istiod host entry for gateway mapping
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ hostvars[groups['control_plane'][0]]['ansible_host'] }} istiod.istio-system.svc istiod.istio-system.svc.cluster.local"
+    state: present
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Template VM Bootstrap cluster.env
+  ansible.builtin.template:
+    src: cluster.env.j2
+    dest: /var/lib/istio/envoy/cluster.env
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart istio
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Link cluster.env to /etc/istio
+  ansible.builtin.file:
+    src: /var/lib/istio/envoy/cluster.env
+    dest: /etc/istio/cluster.env
+    state: link
+    force: true
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Template VM Bootstrap mesh.yaml
+  ansible.builtin.template:
+    src: mesh.yaml.j2
+    dest: /var/lib/istio/envoy/mesh.yaml
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart istio
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Link mesh.yaml to /var/lib/istio/config/mesh
+  ansible.builtin.file:
+    src: /var/lib/istio/envoy/mesh.yaml
+    dest: /var/lib/istio/config/mesh
+    state: link
+    force: true
+  tags:
+    - vm_proxy
+
+# --------------------------------------------------------------------------
+# Start Services
+# --------------------------------------------------------------------------
+
+- name: VM Proxy | Enable and Start Nginx
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Enable and Start Istio Sidecar
+  ansible.builtin.systemd:
+    name: istio
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Create systemd-resolved override directory
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    mode: '0755'
+  tags:
+    - vm_proxy
+
+- name: VM Proxy | Configure systemd-resolved for cluster.local forwarding
+  ansible.builtin.copy:
+    content: |
+      [Resolve]
+      DNS=127.0.0.1:15053
+      Domains=~cluster.local
+    dest: /etc/systemd/resolved.conf.d/istio.conf
+    mode: '0644'
+  notify: restart systemd-resolved
+  tags:
+    - vm_proxy

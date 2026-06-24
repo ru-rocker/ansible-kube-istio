@@ -1,0 +1,124 @@
+---
+- name: Preflight Guardrails | Verify OS Distribution
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] in ['Ubuntu', 'Debian', 'RedHat', 'CentOS', 'Rocky']
+      - ansible_facts['distribution_version'] is version('20.04', '>=') or ansible_facts['distribution_major_version'] is version('8', '>=')
+    fail_msg: "Unsupported OS: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}. Only Ubuntu 20.04+, Debian 11+, or RHEL/Rocky 8+ are supported."
+    success_msg: "OS validation passed: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} detected."
+  tags:
+    - preflight
+    - guardrails
+
+- name: Preflight Guardrails | Verify CPU Cores
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['processor_vcpus'] >= min_cpu_cores
+    fail_msg: "Insufficient CPU cores: {{ ansible_facts['processor_vcpus'] }} found, but at least {{ min_cpu_cores }} are required."
+    success_msg: "CPU cores check passed: {{ ansible_facts['processor_vcpus'] }} cores available."
+  tags:
+    - preflight
+    - guardrails
+
+- name: Preflight Guardrails | Verify Available Memory
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['memtotal_mb'] >= min_ram_mb
+    fail_msg: "Insufficient RAM: {{ ansible_facts['memtotal_mb'] }} MB found, but at least {{ min_ram_mb }} MB are required."
+    success_msg: "RAM check passed: {{ ansible_facts['memtotal_mb'] }} MB available."
+  tags:
+    - preflight
+    - guardrails
+
+- name: Preflight Guardrails | Verify Free Disk Space
+  ansible.builtin.assert:
+    that:
+      - (item.mount == '/' and (item.size_available / 1024 / 1024 / 1024) >= min_disk_gb) or
+        (item.mount == '/var' and (item.size_available / 1024 / 1024 / 1024) >= min_disk_gb)
+    fail_msg: "Disk space on mount {{ item.mount }} is too low. Required: {{ min_disk_gb }} GB."
+  loop: "{{ ansible_facts['mounts'] }}"
+  when: item.mount in ['/', '/var']
+  ignore_errors: true # In some test container environments /var might not be a separate mount
+  tags:
+    - preflight
+    - guardrails
+
+- name: Preflight Guardrails | Check Swap Status
+  ansible.builtin.command: swapon --show
+  register: swap_check
+  changed_when: false
+  failed_when: false
+  tags:
+    - preflight
+    - guardrails
+
+- name: Preflight Guardrails | Handle Swap if Enabled
+  block:
+    - name: Preflight Guardrails | Fail if Swap is Enabled
+      ansible.builtin.fail:
+        msg: "Swap is currently enabled on this host. Swap must be disabled for Kubernetes. Set 'disable_swap_automatically: true' to disable it automatically."
+      when: not disable_swap_automatically
+
+    - name: Preflight Guardrails | Disable Swap Immediately
+      ansible.builtin.command: swapoff -a
+      changed_when: true
+      when: disable_swap_automatically
+
+    - name: Preflight Guardrails | Disable Swap in /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*?\sswap\s+.*)$'
+        replace: '# \1'
+      when: disable_swap_automatically
+  when: swap_check.stdout != ""
+  tags:
+    - preflight
+    - guardrails
+
+- name: Preflight Guardrails | Check Port 6443 Availability (API Server)
+  ansible.builtin.wait_for:
+    port: 6443
+    state: stopped
+    timeout: 5
+  register: port_check
+  failed_when: port_check is failed
+  tags:
+    - preflight
+    - guardrails
+
+- name: Preflight Guardrails | Load Required Kernel Modules
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - br_netfilter
+    - overlay
+  tags:
+    - preflight
+    - guardrails
+
+- name: Preflight Guardrails | Persist Kernel Modules configuration
+  ansible.builtin.copy:
+    content: |
+      overlay
+      br_netfilter
+    dest: /etc/modules-load.d/k8s.conf
+    mode: '0644'
+  tags:
+    - preflight
+    - guardrails
+
+- name: Preflight Guardrails | Apply Sysctl Network Settings
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/k8s.conf
+    state: present
+    reload: true
+  loop:
+    - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+    - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+    - { key: 'net.ipv4.ip_forward', value: '1' }
+  tags:
+    - preflight
+    - guardrails

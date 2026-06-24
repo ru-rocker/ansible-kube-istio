@@ -1,0 +1,12 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: cross-network-gateway-policy
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: eastwestgateway
+  action: ALLOW
+  rules:
+  - {} # Allows all sources to connect to the matched gateway ports

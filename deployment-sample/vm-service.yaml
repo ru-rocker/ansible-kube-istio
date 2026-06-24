@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vm-proxy
+  namespace: mesh-services
+  labels:
+    app: vm-proxy
+spec:
+  ports:
+  - name: http
+    port: 80
+    # With Istio sidecar on the VM, targetPort must be the real application port.
+    # Use 80 for Nginx, 8080 for JBoss/WildFly, or your app port.
+    targetPort: 80
+  selector:
+    app: vm-proxy

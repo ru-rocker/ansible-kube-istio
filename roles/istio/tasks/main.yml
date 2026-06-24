@@ -1,0 +1,143 @@
+---
+# ==============================================================================
+# STAGE 4: HELM + ISTIO AMBIENT
+# ==============================================================================
+
+- name: Istio | Install Python Dependencies (Apt)
+  ansible.builtin.apt:
+    name:
+      - python3-kubernetes
+      - python3-yaml
+    state: present
+    update_cache: true
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio
+    - istio-python
+
+- name: Istio | Download Helm Installer
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    dest: /tmp/get_helm.sh
+    mode: "0755"
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio
+
+- name: Istio | Install Helm
+  ansible.builtin.command: /tmp/get_helm.sh
+  args:
+    creates: /usr/local/bin/helm
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio
+
+- name: Istio | Install Gateway API CRDs
+  ansible.builtin.command: >
+    kubectl apply --server-side -f
+    https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.4.0/experimental-install.yaml
+  environment:
+    KUBECONFIG: /root/.kube/config
+  changed_when: false
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio
+
+- name: Istio | Add Istio Helm Repository
+  kubernetes.core.helm_repository:
+    name: istio
+    repo_url: https://istio-release.storage.googleapis.com/charts
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio
+
+- name: Istio | Update Helm Repositories
+  ansible.builtin.command: helm repo update
+  changed_when: false
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio
+
+- name: Istio | Install Istio Base
+  kubernetes.core.helm:
+    name: istio-base
+    chart_ref: istio/base
+    chart_version: "{{ istio_version }}"
+    release_namespace: istio-system
+    create_namespace: true
+    wait: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio
+
+- name: Istio | Install Istiod (Ambient Profile)
+  kubernetes.core.helm:
+    name: istiod
+    chart_ref: istio/istiod
+    chart_version: "{{ istio_version }}"
+    release_namespace: istio-system
+    values:
+      profile: ambient
+      pilot:
+        env:
+          PILOT_ENABLE_ALPHA_GATEWAY_API: "true"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 1000m
+          memory: 1024Mi
+    wait: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio
+
+- name: Istio | Install Istio CNI (Ambient Profile)
+  kubernetes.core.helm:
+    name: istio-cni
+    chart_ref: istio/cni
+    chart_version: "{{ istio_version }}"
+    release_namespace: istio-system
+    values:
+      profile: ambient
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+    wait: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio
+
+- name: Istio | Install Ztunnel
+  kubernetes.core.helm:
+    name: ztunnel
+    chart_ref: istio/ztunnel
+    chart_version: "{{ istio_version }}"
+    release_namespace: istio-system
+    values:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+    wait: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - istio

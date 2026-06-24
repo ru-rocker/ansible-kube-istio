@@ -1,0 +1,10 @@
+---
+- name: restart istio
+  ansible.builtin.systemd:
+    name: istio
+    state: restarted
+
+- name: restart systemd-resolved
+  ansible.builtin.systemd:
+    name: systemd-resolved
+    state: restarted

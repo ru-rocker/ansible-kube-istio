@@ -1,0 +1,435 @@
+---
+# ==============================================================================
+# STAGE 1: OS & PREREQUISITES CONFIGURATION
+# ==============================================================================
+
+# --- Aggressive cleanup of ALL pre-existing Docker & Kubernetes APT sources ---
+# This catches files with any name (e.g. docker.list, docker.sources,
+# archive_uri-download_docker_com*.sources, etc.)
+
+- name: Kubernetes | Find all Docker-related apt source files
+  ansible.builtin.shell: >
+    grep -rl 'download\.docker\.com' /etc/apt/sources.list.d/ 2>/dev/null || true
+  register: docker_source_files
+  changed_when: false
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Remove all Docker-related apt source files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ docker_source_files.stdout_lines | default([]) }}"
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - docker_source_files.stdout_lines | default([]) | length > 0
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Find all Kubernetes-related apt source files
+  ansible.builtin.shell: >
+    grep -rl 'pkgs\.k8s\.io' /etc/apt/sources.list.d/ 2>/dev/null || true
+  register: k8s_source_files
+  changed_when: false
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Remove all Kubernetes-related apt source files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ k8s_source_files.stdout_lines | default([]) }}"
+  when:
+    - ansible_facts['os_family'] == "Debian"
+    - k8s_source_files.stdout_lines | default([]) | length > 0
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Remove legacy apt keyring files
+  ansible.builtin.file:
+    path: "/etc/apt/keyrings/{{ item }}"
+    state: absent
+  loop:
+    - docker.asc
+    - docker.gpg
+    - kubernetes-apt-keyring.gpg
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Remove legacy Docker/Kubernetes repositories from sources.list
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list
+    regexp: '^deb.*(download\.docker\.com|pkgs\.k8s\.io).*\n'
+    replace: ''
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Install Prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - software-properties-common
+    state: present
+    update_cache: true
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Create Directory for Apt Keyrings
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+# --------------------------------------------------------------------------
+# Containerd Setup
+# --------------------------------------------------------------------------
+
+- name: Kubernetes | Add Docker Repository (deb822)
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: deb
+    uris: https://download.docker.com/linux/ubuntu
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: stable
+    signed_by: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Install Containerd (pinned to 1.7.x)
+  ansible.builtin.apt:
+    name: containerd.io=1.7*
+    state: present
+    update_cache: true
+    allow_downgrade: true
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Create Containerd Config Directory
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Remove Packaged Containerd Config
+  ansible.builtin.file:
+    path: /etc/containerd/config.toml
+    state: absent
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Generate Fresh Containerd Config from Defaults
+  ansible.builtin.shell: containerd config default > /etc/containerd/config.toml
+  changed_when: true
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Enable SystemdCgroup in Containerd
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: 'SystemdCgroup = false'
+    replace: 'SystemdCgroup = true'
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Ensure CRI Plugin is Not Disabled
+  ansible.builtin.replace:
+    path: /etc/containerd/config.toml
+    regexp: '^(\s*disabled_plugins\s*=\s*\[.*"cri".*\])'
+    replace: '# \1'
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Restart Containerd with Clean Config
+  ansible.builtin.systemd:
+    name: containerd
+    state: restarted
+    enabled: true
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Wait for Containerd Socket
+  ansible.builtin.wait_for:
+    path: /var/run/containerd/containerd.sock
+    state: present
+    timeout: 30
+  tags:
+    - kubernetes
+
+# --------------------------------------------------------------------------
+# Kubernetes Repository & Package Installation
+# --------------------------------------------------------------------------
+
+- name: Kubernetes | Add Kubernetes Repository (deb822)
+  ansible.builtin.deb822_repository:
+    name: kubernetes
+    types: deb
+    uris: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_version }}/deb/"
+    suites: /
+    signed_by: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor_version }}/deb/Release.key"
+    state: present
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Install Kubelet, Kubeadm, and Kubectl
+  ansible.builtin.apt:
+    name:
+      - "kubelet={{ kubernetes_version }}-*"
+      - "kubeadm={{ kubernetes_version }}-*"
+      - "kubectl={{ kubernetes_version }}-*"
+      - cri-tools
+    state: present
+    update_cache: true
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Prevent Kubernetes Packages from Upgrading Automatically
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+  when: ansible_facts['os_family'] == "Debian"
+  tags:
+    - kubernetes
+
+# --------------------------------------------------------------------------
+# Verify Containerd CRI Status (Requires cri-tools/crictl installed above)
+# --------------------------------------------------------------------------
+
+- name: Kubernetes | Dump Containerd Version for Diagnostics
+  ansible.builtin.command: containerd --version
+  register: containerd_version
+  changed_when: false
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Show Containerd Version
+  ansible.builtin.debug:
+    msg: "{{ containerd_version.stdout }}"
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Verify Containerd CRI is Responding
+  ansible.builtin.command: crictl --runtime-endpoint unix:///var/run/containerd/containerd.sock info
+  register: crictl_check
+  retries: 5
+  delay: 5
+  until: crictl_check.rc == 0
+  changed_when: false
+  failed_when: false
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Show CRI Check Result (for diagnostics if failed)
+  ansible.builtin.debug:
+    msg: "CRI check rc={{ crictl_check.rc }} stderr={{ crictl_check.stderr | default('') }}"
+  when: crictl_check.rc != 0
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Fail if CRI is Not Available
+  ansible.builtin.fail:
+    msg: >
+      Containerd CRI plugin is not responding after restart.
+      Version: {{ containerd_version.stdout }}.
+      This may indicate containerd 2.x is incompatible with Kubernetes {{ kubernetes_version }}.
+      Consider pinning containerd.io to version 1.7.x.
+  when: crictl_check.rc != 0
+  tags:
+    - kubernetes
+
+# ==============================================================================
+# STAGE 2: CONTROL PLANE INITIALIZATION
+# ==============================================================================
+
+- name: Kubernetes | Check if Cluster is Initialized
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: kube_initialized
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Check if current endpoint matches configured endpoint
+  ansible.builtin.shell: grep -q "{{ control_plane_endpoint }}" /etc/kubernetes/admin.conf
+  register: endpoint_check
+  failed_when: false
+  changed_when: false
+  when:
+    - inventory_hostname in groups['control_plane']
+    - kube_initialized.stat.exists
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Reset Failed Cluster Init (if endpoint changed or config missing)
+  ansible.builtin.command: kubeadm reset -f
+  when:
+    - inventory_hostname in groups['control_plane']
+    - (not kube_initialized.stat.exists) or (kube_initialized.stat.exists and endpoint_check.rc != 0)
+  changed_when: true
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Remove old kubeconfig files on reset
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/kubernetes/admin.conf
+    - /root/.kube/config
+  when:
+    - inventory_hostname in groups['control_plane']
+    - (not kube_initialized.stat.exists) or (kube_initialized.stat.exists and endpoint_check.rc != 0)
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Initialize Kubernetes Control Plane
+  ansible.builtin.command: >
+    kubeadm init
+    --pod-network-cidr={{ pod_network_cidr }}
+    --control-plane-endpoint={{ control_plane_endpoint }}
+    --ignore-preflight-errors=NumCPU,Mem
+  when:
+    - inventory_hostname in groups['control_plane']
+    - (not kube_initialized.stat.exists) or (kube_initialized.stat.exists and endpoint_check.rc != 0)
+  register: kubeadm_init
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Create Kubeconfig Directory for Root
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: '0700'
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Copy Kubeconfig to Root
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /root/.kube/config
+    remote_src: true
+    mode: '0600'
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Wait for API Server to Become Ready
+  ansible.builtin.command: kubectl --kubeconfig=/root/.kube/config get nodes
+  register: api_ready
+  retries: 30
+  delay: 10
+  until: api_ready.rc == 0
+  changed_when: false
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Install Pod Network CNI (Flannel)
+  ansible.builtin.command: >
+    kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+  environment:
+    KUBECONFIG: /root/.kube/config
+  changed_when: false
+  when:
+    - inventory_hostname in groups['control_plane']
+    - kubeadm_init is changed or not kube_initialized.stat.exists
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Generate Join Command
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: join_command_raw
+  changed_when: false
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Store Join Command as Fact
+  ansible.builtin.set_fact:
+    join_command: "{{ join_command_raw.stdout }}"
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kubernetes
+
+# ==============================================================================
+# STAGE 3: WORKER NODE JOIN
+# ==============================================================================
+
+- name: Kubernetes | Check if Worker Already Joined
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: kubelet_conf
+  when: inventory_hostname in groups['workers']
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Check if worker's endpoint matches configured endpoint
+  ansible.builtin.shell: grep -q "{{ control_plane_endpoint }}" /etc/kubernetes/kubelet.conf
+  register: worker_endpoint_check
+  failed_when: false
+  changed_when: false
+  when:
+    - inventory_hostname in groups['workers']
+    - kubelet_conf.stat.exists
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Reset Worker Node (if endpoint changed or config missing)
+  ansible.builtin.command: kubeadm reset -f
+  when:
+    - inventory_hostname in groups['workers']
+    - (not kubelet_conf.stat.exists) or (kubelet_conf.stat.exists and worker_endpoint_check.rc != 0)
+  changed_when: true
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Remove old kubelet config on reset
+  ansible.builtin.file:
+    path: /etc/kubernetes/kubelet.conf
+    state: absent
+  when:
+    - inventory_hostname in groups['workers']
+    - (not kubelet_conf.stat.exists) or (kubelet_conf.stat.exists and worker_endpoint_check.rc != 0)
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Generate Join Command on Control Plane
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: worker_join_command_raw
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  changed_when: false
+  when:
+    - inventory_hostname in groups['workers']
+    - (not kubelet_conf.stat.exists) or (kubelet_conf.stat.exists and worker_endpoint_check.rc != 0)
+  tags:
+    - kubernetes
+
+- name: Kubernetes | Join Workers to Cluster
+  ansible.builtin.command: "{{ worker_join_command_raw.stdout }} --ignore-preflight-errors=NumCPU,Mem"
+  when:
+    - inventory_hostname in groups['workers']
+    - (not kubelet_conf.stat.exists) or (kubelet_conf.stat.exists and worker_endpoint_check.rc != 0)
+  tags:
+    - kubernetes

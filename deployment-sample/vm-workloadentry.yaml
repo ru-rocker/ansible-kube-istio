@@ -1,0 +1,12 @@
+apiVersion: networking.istio.io/v1
+kind: WorkloadEntry
+metadata:
+  name: vm-proxy-node-1
+  namespace: mesh-services
+spec:
+  address: 168.144.99.237
+  labels:
+    app: vm-proxy
+    version: v1
+  serviceAccount: vm-proxy-sa
+  network: vm-network

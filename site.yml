@@ -1,0 +1,35 @@
+---
+- name: Deploy Kubernetes Cluster and Istio Service Mesh with Guardrails
+  hosts: k8s_cluster
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: preflight
+      tags:
+        - preflight
+        - guardrails
+
+    - role: kubernetes
+      tags:
+        - kubernetes
+
+    - role: istio
+      tags:
+        - istio
+
+    - role: security_guardrails
+      tags:
+        - security
+        - guardrails
+
+- name: Install Nginx application runtime and Istio sidecar on VM
+  hosts: proxy_servers
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: istio_vm
+      tags:
+        - vm_proxy
+        - nginx_proxy

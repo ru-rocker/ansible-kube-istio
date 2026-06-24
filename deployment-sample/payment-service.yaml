@@ -1,0 +1,71 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: mesh-services
+  labels:
+    app: payment-service
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+        version: v1
+    spec:
+      containers:
+      - name: payment-service
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d
+      volumes:
+      - name: config
+        configMap:
+          name: payment-service-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payment-service-config
+  namespace: mesh-services
+data:
+  default.conf: |
+    server {
+      listen 80;
+      server_name _;
+
+      location / {
+        return 200 '{"service":"payment-service","status":"ok"}';
+        add_header Content-Type application/json;
+      }
+
+      location /process {
+        return 200 '{"service":"payment-service","transaction":"processed","mTLS":"ztunnel-secured"}';
+        add_header Content-Type application/json;
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: mesh-services
+  labels:
+    app: payment-service
+spec:
+  selector:
+    app: payment-service
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
