@@ -18,6 +18,10 @@
       tags:
         - istio
 
+    - role: kuma
+      tags:
+        - kuma
+
     - role: security_guardrails
       tags:
         - security
@@ -33,3 +37,8 @@
       tags:
         - vm_proxy
         - nginx_proxy
+
+    - role: kuma_vm
+      tags:
+        - kuma_vm
+

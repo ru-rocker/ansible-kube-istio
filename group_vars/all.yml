@@ -29,3 +29,13 @@ vm_auto_register_group: "vm-proxy-group"
 vm_dns_capture: true
 vm_dns_auto_allocate: true
 vm_bootstrap_port: 30185
+
+# Kuma Configuration
+kuma_version: "2.14.0"
+kuma_mesh: "default"
+
+# Kuma VM Sidecar Proxy Configuration
+kuma_vm_service_name: "nginx-vm-kuma"
+kuma_vm_inbound_port: 80
+kuma_vm_service_port: 80
+

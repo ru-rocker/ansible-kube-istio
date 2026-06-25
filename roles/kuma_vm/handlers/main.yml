@@ -1,0 +1,5 @@
+---
+- name: restart kuma-dp
+  ansible.builtin.systemd:
+    name: kuma-dp
+    state: restarted

@@ -13,9 +13,14 @@ This repository contains Ansible playbooks and roles to deploy a production-read
   - `preflight`: Pre-checks to validate kernel modules, sysctl parameters, OS, swap status, and resource limits.
   - `kubernetes`: Setup control plane and worker nodes via kubeadm.
   - `istio`: Install Istioctl/Helm templates for service mesh initialization.
+  - `istio_vm`: Install Nginx runtime and Istio sidecar proxy on VMs.
   - `security_guardrails`: Configure strict mTLS and zero-trust default-deny authorization policies.
+  - `kuma`: Deploy Kuma Control Plane using Helm on Kubernetes.
+  - `kuma_vm`: Setup and register VM workloads with Kuma in Universal Mode.
 - [GEMINI.md](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/GEMINI.md) - Project-specific guardrails, OS/hardware prerequisites, and security standards.
 - [docs/vm-ambient-compatibility.md](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/docs/vm-ambient-compatibility.md) - Compatibility status, gaps, and alternatives for VM integration in Istio Ambient Mesh.
+- [docs/kuma_kong_mesh_comparison.md](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/docs/kuma_kong_mesh_comparison.md) - Architectural and cost comparison of Kuma and Kong Mesh vs. Istio.
+
 
 ---
 
@@ -84,9 +89,24 @@ The playbook uses structured tags for targeted executions:
   ansible-playbook -i inventory/hosts.ini site.yml --tags kubernetes
   ```
 
-- **Istio Installation Only** (sets up istioctl, Helm charts, sidecar CNI plugins):
+- **Istio Control Plane Setup Only** (sets up Helm charts and control plane for Istio Ambient Profile):
   ```bash
   ansible-playbook -i inventory/hosts.ini site.yml --tags istio
+  ```
+
+- **Istio VM Proxy Setup Only** (onboards VM runtime with Nginx and Istio sidecar proxy):
+  ```bash
+  ansible-playbook -i inventory/hosts.ini site.yml --tags vm_proxy
+  ```
+
+- **Kuma Control Plane Setup Only** (deploys Kuma Control Plane using Helm on Kubernetes):
+  ```bash
+  ansible-playbook -i inventory/hosts.ini site.yml --tags kuma
+  ```
+
+- **Kuma VM Proxy Setup Only** (onboards VM runtime with Nginx and Kuma data plane proxy in Universal mode):
+  ```bash
+  ansible-playbook -i inventory/hosts.ini site.yml --tags kuma_vm
   ```
 
 - **Security Policy/Guardrails Only** (enforces namespace isolation labels, strict mTLS, zero-trust rules):
@@ -98,6 +118,7 @@ The playbook uses structured tags for targeted executions:
   ```bash
   ansible-playbook -i inventory/hosts.ini site.yml --tags guardrails
   ```
+
 
 ### 5. Overriding Configuration Variables
 You can customize variables defined in [group_vars/all.yml](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/group_vars/all.yml) on the fly using `--extra-vars`:

@@ -1,0 +1,253 @@
+---
+# ==============================================================================
+# DEPLOY KUMA DATA PLANE PROXY ON VM (UNIVERSAL MODE)
+# ==============================================================================
+
+- name: Kuma VM | Update Apt Cache (Debian)
+  ansible.builtin.apt:
+    update_cache: true
+  ignore_errors: true
+  when: ansible_os_family == "Debian"
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Install Prerequisites (Debian)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - iptables
+      - iproute2
+    state: present
+  when: ansible_os_family == "Debian"
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Install Prerequisites (RedHat)
+  ansible.builtin.dnf:
+    name:
+      - curl
+      - wget
+      - iptables
+      - iproute
+    state: present
+  when: ansible_os_family == "RedHat"
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Install Nginx Application Runtime (Debian)
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+  when: ansible_os_family == "Debian"
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Install Nginx Application Runtime (RedHat)
+  ansible.builtin.dnf:
+    name: nginx
+    state: present
+  when: ansible_os_family == "RedHat"
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Create kuma-dp system group
+  ansible.builtin.group:
+    name: kuma-dp
+    state: present
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Create kuma-dp system user
+  ansible.builtin.user:
+    name: kuma-dp
+    group: kuma-dp
+    shell: /usr/sbin/nologin
+    system: true
+    state: present
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Check if kuma-dp binary exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/kuma-dp
+  register: kuma_dp_stat
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Download and extract Kuma binaries via installer script
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -L https://kuma.io/installer.sh | VERSION={{ kuma_version }} sh -
+  args:
+    chdir: /tmp
+    executable: /bin/bash
+  when: not kuma_dp_stat.stat.exists
+  changed_when: true
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Install kuma-dp and kumactl binaries
+  ansible.builtin.copy:
+    src: "/tmp/kuma-{{ kuma_version }}/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: "0755"
+    remote_src: true
+  loop:
+    - kuma-dp
+    - kumactl
+  when: not kuma_dp_stat.stat.exists
+  tags:
+    - kuma_vm
+
+# --------------------------------------------------------------------------
+# Dynamic Credential & Certificate Generation
+# --------------------------------------------------------------------------
+
+- name: Kuma VM | Extract Kuma Control Plane CA Certificate
+  ansible.builtin.shell: >
+    kubectl get secret kuma-control-plane-tls -n kuma-system -o jsonpath='{.data.ca\.crt}'
+  register: kuma_ca_raw
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  changed_when: false
+  failed_when: false
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Fallback to tls.crt if ca.crt is not in secret
+  ansible.builtin.shell: >
+    kubectl get secret kuma-control-plane-tls -n kuma-system -o jsonpath='{.data.tls\.crt}'
+  register: kuma_tls_raw
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  changed_when: false
+  when: kuma_ca_raw.stdout == ""
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Set CA Cert Fact
+  ansible.builtin.set_fact:
+    kuma_ca_pem: "{{ (kuma_ca_raw.stdout | b64decode) if kuma_ca_raw.stdout != '' else (kuma_tls_raw.stdout | b64decode) }}"
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Generate Kuma Dataplane Token on Control Plane
+  ansible.builtin.shell: >
+    kubectl exec -n kuma-system deploy/kuma-control-plane -c kuma-control-plane --
+    kumactl generate dataplane-token --name {{ inventory_hostname }} --mesh {{ kuma_mesh }}
+  register: kuma_token_raw
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  changed_when: false
+  tags:
+    - kuma_vm
+
+# --------------------------------------------------------------------------
+# Create Directories & Deploy Credentials
+# --------------------------------------------------------------------------
+
+- name: Kuma VM | Create Kuma config directory
+  ansible.builtin.file:
+    path: /etc/kuma
+    state: directory
+    owner: kuma-dp
+    group: kuma-dp
+    mode: '0755'
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Create Kuma state directory
+  ansible.builtin.file:
+    path: /var/lib/kuma
+    state: directory
+    owner: kuma-dp
+    group: kuma-dp
+    mode: '0700'
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Deploy Kuma Control Plane CA Certificate
+  ansible.builtin.copy:
+    content: "{{ kuma_ca_pem }}"
+    dest: /etc/kuma/kuma-ca.crt
+    owner: kuma-dp
+    group: kuma-dp
+    mode: '0644'
+  notify: restart kuma-dp
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Deploy Kuma Dataplane Token
+  ansible.builtin.copy:
+    content: "{{ kuma_token_raw.stdout }}"
+    dest: /etc/kuma/kuma-dp-token
+    owner: kuma-dp
+    group: kuma-dp
+    mode: '0600'
+  notify: restart kuma-dp
+  tags:
+    - kuma_vm
+
+# --------------------------------------------------------------------------
+# Template Configurations
+# --------------------------------------------------------------------------
+
+- name: Kuma VM | Add control plane host entry to /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "{{ hostvars[groups['control_plane'][0]]['ansible_host'] }} kuma-control-plane.kuma-system.svc kuma-control-plane.kuma-system.svc.cluster.local"
+    state: present
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Template Dataplane Configuration
+  ansible.builtin.template:
+    src: dp.yaml.j2
+    dest: /etc/kuma/dp.yaml
+    owner: kuma-dp
+    group: kuma-dp
+    mode: '0644'
+  notify: restart kuma-dp
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Template systemd service
+  ansible.builtin.template:
+    src: kuma-dp.service.j2
+    dest: /etc/systemd/system/kuma-dp.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart kuma-dp
+  tags:
+    - kuma_vm
+
+# --------------------------------------------------------------------------
+# Transparent Proxy Configuration & Start Services
+# --------------------------------------------------------------------------
+
+- name: Kuma VM | Configure Transparent Proxy Rules
+  ansible.builtin.command: >
+    /usr/local/bin/kumactl install transparent-proxy
+    --kuma-dp-user kuma-dp
+    --exclude-inbound-ports 22
+  changed_when: true
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Enable and Start Nginx
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Enable and Start Kuma DP Proxy
+  ansible.builtin.systemd:
+    name: kuma-dp
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags:
+    - kuma_vm

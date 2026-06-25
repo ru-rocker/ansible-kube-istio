@@ -1,0 +1,21 @@
+[Unit]
+Description=Kuma Data Plane Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=kuma-dp
+Group=kuma-dp
+Type=simple
+WorkingDirectory=/var/lib/kuma
+ExecStart=/usr/local/bin/kuma-dp run \
+  --cp-address=https://{{ hostvars[groups['control_plane'][0]]['ansible_host'] }}:5678 \
+  --dataplane-file=/etc/kuma/dp.yaml \
+  --dataplane-token-file=/etc/kuma/kuma-dp-token \
+  --ca-cert-file=/etc/kuma/kuma-ca.crt
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

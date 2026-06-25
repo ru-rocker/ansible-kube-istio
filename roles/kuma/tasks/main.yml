@@ -1,0 +1,75 @@
+---
+# ==============================================================================
+# INSTALL KUMA SERVICE MESH CONTROL PLANE
+# ==============================================================================
+
+- name: Kuma | Install Python Dependencies (Apt)
+  ansible.builtin.apt:
+    name:
+      - python3-kubernetes
+      - python3-yaml
+    state: present
+    update_cache: true
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kuma
+    - kuma-python
+
+- name: Kuma | Download Helm Installer
+  ansible.builtin.get_url:
+    url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    dest: /tmp/get_helm.sh
+    mode: "0755"
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kuma
+
+- name: Kuma | Install Helm
+  ansible.builtin.command: /tmp/get_helm.sh
+  args:
+    creates: /usr/local/bin/helm
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kuma
+
+- name: Kuma | Add Kuma Helm Repository
+  kubernetes.core.helm_repository:
+    name: kuma
+    repo_url: https://kumahq.github.io/charts
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kuma
+
+- name: Kuma | Update Helm Repositories
+  ansible.builtin.command: helm repo update
+  changed_when: false
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kuma
+
+- name: Kuma | Install Kuma Control Plane
+  kubernetes.core.helm:
+    name: kuma
+    chart_ref: kuma/kuma
+    chart_version: "{{ kuma_version }}"
+    release_namespace: kuma-system
+    create_namespace: true
+    values:
+      controlPlane:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1024Mi
+    wait: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kuma
