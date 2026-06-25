@@ -15,10 +15,12 @@
         - kubernetes
 
     - role: istio
+      when: mesh_type == "istio"
       tags:
         - istio
 
     - role: kuma
+      when: mesh_type == "kuma"
       tags:
         - kuma
 
@@ -34,11 +36,14 @@
 
   roles:
     - role: istio_vm
+      when: mesh_type == "istio"
       tags:
         - vm_proxy
         - nginx_proxy
 
     - role: kuma_vm
+      when: mesh_type == "kuma"
       tags:
         - kuma_vm
+
 

@@ -75,6 +75,14 @@
     - preflight
     - guardrails
 
+- name: Preflight Guardrails | Check if Kubernetes is already initialized
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: preflight_kubeadm_init_check
+  tags:
+    - preflight
+    - guardrails
+
 - name: Preflight Guardrails | Check Port 6443 Availability (API Server)
   ansible.builtin.wait_for:
     port: 6443
@@ -82,9 +90,11 @@
     timeout: 5
   register: port_check
   failed_when: port_check is failed
+  when: not preflight_kubeadm_init_check.stat.exists
   tags:
     - preflight
     - guardrails
+
 
 - name: Preflight Guardrails | Load Required Kernel Modules
   community.general.modprobe:

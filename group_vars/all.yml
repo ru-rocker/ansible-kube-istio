@@ -5,6 +5,9 @@ min_cpu_cores: 1
 min_disk_gb: 10
 disable_swap_automatically: true
 
+# Service Mesh Type Configuration (istio or kuma)
+mesh_type: "kuma"
+
 # Kubernetes Configuration
 kubernetes_minor_version: "v1.31"
 kubernetes_version: "1.31.0"
@@ -33,6 +36,7 @@ vm_bootstrap_port: 30185
 # Kuma Configuration
 kuma_version: "2.14.0"
 kuma_mesh: "default"
+kuma_vm_bootstrap_port: 30578
 
 # Kuma VM Sidecar Proxy Configuration
 kuma_vm_service_name: "nginx-vm-kuma"

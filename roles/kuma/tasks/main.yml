@@ -60,6 +60,9 @@
     create_namespace: true
     values:
       controlPlane:
+        envVars:
+          KUMA_BOOTSTRAP_SERVER_PARAMS_XDS_PORT: "{{ kuma_vm_bootstrap_port }}"
+          KUMA_DP_SERVER_AUTHN_DP_PROXY_TYPE: "none"
         resources:
           requests:
             cpu: 100m
@@ -73,3 +76,63 @@
   when: inventory_hostname in groups['control_plane']
   tags:
     - kuma
+
+- name: Kuma | Check if kumactl exists on host
+  ansible.builtin.stat:
+    path: /usr/local/bin/kumactl
+  register: host_kumactl_stat
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kuma
+
+- name: Kuma | Download and extract Kuma binaries on host
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -L https://kuma.io/installer.sh | VERSION={{ kuma_version }} sh -
+  args:
+    chdir: /tmp
+    executable: /bin/bash
+  when:
+    - inventory_hostname in groups['control_plane']
+    - not host_kumactl_stat.stat.exists
+  changed_when: true
+  tags:
+    - kuma
+
+- name: Kuma | Install kumactl on host
+  ansible.builtin.copy:
+    src: "/tmp/kuma-{{ kuma_version }}/bin/kumactl"
+    dest: /usr/local/bin/kumactl
+    mode: "0755"
+    remote_src: true
+  when:
+    - inventory_hostname in groups['control_plane']
+    - not host_kumactl_stat.stat.exists
+  tags:
+    - kuma
+
+- name: Kuma | Expose Control Plane Service via NodePort
+  kubernetes.core.k8s:
+    state: patched
+    kind: Service
+    name: kuma-control-plane
+    namespace: kuma-system
+    definition:
+      spec:
+        type: NodePort
+        ports:
+          - name: dp-server
+            port: 5678
+            targetPort: 5678
+          - name: dp-server-nodeport
+            port: "{{ kuma_vm_bootstrap_port | int }}"
+            targetPort: 5678
+            nodePort: "{{ kuma_vm_bootstrap_port | int }}"
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - kuma
+
+
+

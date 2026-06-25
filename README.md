@@ -55,11 +55,19 @@ control_plane
 workers
 ```
 
-### 2. Run the Full Deployment
-To run the entire installation from preflight checks to security configuration:
+### 2. Configure the Active Mesh Type
+In [group_vars/all.yml](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/group_vars/all.yml), configure which service mesh you want to deploy:
+```yaml
+# Set to "istio" or "kuma"
+mesh_type: "istio"
+```
+
+### 3. Run the Full Deployment
+To run the entire installation from preflight checks to security configuration for your chosen mesh:
 ```bash
 ansible-playbook -i inventory/hosts.ini site.yml
 ```
+*Note: The playbook dynamically loads the correct control plane and VM proxy roles matching your active `mesh_type` configuration.*
 
 If you require custom SSH private keys or sudo passwords, you can append the relevant flags:
 ```bash
@@ -70,13 +78,14 @@ ansible-playbook -i inventory/hosts.ini site.yml --private-key=/path/to/your/id_
 ansible-playbook -i inventory/hosts.ini site.yml --ask-pass --ask-become-pass
 ```
 
-### 3. Dry-Run / Check Mode
+
+### 4. Dry-Run / Check Mode
 To simulate the execution and see what changes would be applied without modifying the targets:
 ```bash
 ansible-playbook -i inventory/hosts.ini site.yml --check
 ```
 
-### 4. Running Specific Setup Phases (Using Tags)
+### 5. Running Specific Setup Phases (Using Tags)
 The playbook uses structured tags for targeted executions:
 
 - **Pre-flight Checks Only** (validates OS, resource limits, swap, ports, sysctl, kernel modules):
@@ -135,7 +144,7 @@ To manage the Kubernetes cluster directly from your local machine, retrieve the 
 
 ```bash
 # 1. Copy the admin config from the control plane node
-scp root@167.71.219.28:/etc/kubernetes/admin.conf ~/.kube/config-kubeadm
+scp root@[contro_plane_address]:/etc/kubernetes/admin.conf ~/.kube/config-kubeadm
 
 # 2. Export the environment variable for your active shell
 export KUBECONFIG=~/.kube/config-kubeadm
@@ -148,49 +157,68 @@ kubectl get nodes
 
 ## Deploying Sample Applications
 
-Once you have local `kubectl` access, deploy the resources from the `deployment-sample` directory in the following logical order:
+Once you have local `kubectl` access, deploy the resources from the `deployment-sample` directory. The installation commands depend on which service mesh you are running:
 
-### 1. Mesh Infrastructure (Gateway & Ingress Routing)
-These components configure the gateway and policies to securely route external VM traffic to the control plane:
+---
 
+### Scenario A: Deploying under Istio (`mesh_type: "istio"`)
+
+#### 1. Common Application Workloads
+Deploy the microservices (order-service and payment-service) and the curl verification client:
 ```bash
-# Apply the East-West Gateway (for external connectivity)
-kubectl apply -f deployment-sample/eastwest-gateway.yaml
+# Apply common microservices
+kubectl apply -f deployment-sample/common/order-service.yaml
+kubectl apply -f deployment-sample/common/payment-service.yaml
+kubectl apply -f deployment-sample/common/ambient-client.yaml
+```
 
-# Patch the generated service to expose port 15012 on NodePort 30185 (VM bootstrap port)
+#### 2. Istio-Specific Ingress & VM Registration
+Configure the East-West Gateway, TLS routing, and VM WorkloadGroup for registration:
+```bash
+# Apply the East-West Gateway
+kubectl apply -f deployment-sample/istio/eastwest-gateway.yaml
+
+# Patch the gateway to expose the bootstrap port (15012) on NodePort 30185
 kubectl patch service cross-network-gateway-istio -n istio-system --type='merge' -p '{"spec": {"type": "NodePort", "ports": [{"name": "tls-istiod", "port": 15012, "nodePort": 30185}]}}'
 
 # Apply the TLS Route mapping for istiod
-kubectl apply -f deployment-sample/istiod-route.yaml
+kubectl apply -f deployment-sample/istio/istiod-route.yaml
 
-# Apply the authorization policy to allow incoming connection to the gateway
-kubectl apply -f deployment-sample/gateway-auth-policy.yaml
+# Allow external traffic to hit gateway ports
+kubectl apply -f deployment-sample/istio/gateway-auth-policy.yaml
+
+# Deploy VM WorkloadGroup & ServiceAccount for auto-registration
+kubectl apply -f deployment-sample/istio/vm-workloadgroup.yaml
+
+# Deploy Kubernetes service pointing to the VM selector
+kubectl apply -f deployment-sample/istio/vm-service.yaml
 ```
 
-### 2. VM Auto-Registration Group
-Prepare the mesh namespace for receiving auto-registering VM workloads:
-
+#### 3. Istio Zero-Trust Authorization Policies
+Enforce strict rules allowing traffic only along validated paths:
 ```bash
-# Deploy the WorkloadGroup definition and ServiceAccount
-kubectl apply -f deployment-sample/vm-workloadgroup.yaml
-
-# Deploy the Service that maps to the VM workload selector
-kubectl apply -f deployment-sample/vm-service.yaml
+# Apply authorization policies
+kubectl apply -f deployment-sample/istio/auth-policy.yaml
 ```
-*(Note: You do not need to apply `vm-workloadentry.yaml` manually since the VM sidecar auto-registers and creates this dynamically upon connecting).*
 
-### 3. Application Workloads & Zero-Trust Policies
-Deploy sample microservices and authorization policies that enforce zero-trust communication rules:
+---
 
+### Scenario B: Deploying under Kuma (`mesh_type: "kuma"`)
+
+#### 1. Common Application Workloads
+Deploy the microservices and client pod:
 ```bash
-# Deploy the order-service
-kubectl apply -f deployment-sample/order-service.yaml
+# Apply common microservices
+kubectl apply -f deployment-sample/common/order-service.yaml
+kubectl apply -f deployment-sample/common/payment-service.yaml
+kubectl apply -f deployment-sample/common/ambient-client.yaml
+```
 
-# Deploy the payment-service
-kubectl apply -f deployment-sample/payment-service.yaml
-
-# Apply authorization policies (allows communication between the services)
-kubectl apply -f deployment-sample/auth-policy.yaml
+#### 2. Kuma-Specific Zero-Trust Traffic Permissions
+Deploy the `MeshTrafficPermission` resources to allow communication through the mesh's default-deny rule:
+```bash
+# Apply Kuma traffic permissions
+kubectl apply -f deployment-sample/kuma/traffic-permissions.yaml
 ```
 
 ---
@@ -239,75 +267,114 @@ The answer is **no**. You only need to expose the same two ports (`30185` and `1
     * **SNI-Based Routing:** For data plane traffic on port `15443`, the Gateway uses the Server Name Indication (SNI) header in the mTLS handshake to route the packets to the correct VM instance without needing individual port allocations.
 
 ---
-
 ## Testing Connectivity Between Mesh Services
 
-To verify the cross-network and zero-trust service mesh configuration, you can perform testing in the three key communication scenarios. Ensure your terminal has the correct `KUBECONFIG` set up (e.g., `export KUBECONFIG=~/.kube/config-ansible-kube`).
+Choose the instructions matching your configured mesh:
 
-### 1. Kube-to-Kube (kube-kube)
-This scenario tests communication between two containerized services inside the Kubernetes cluster (e.g., `order-service` calling `payment-service`). 
+---
 
-Run the following command to execute a `curl` inside an `order-service` pod targeting the `payment-service` ClusterIP:
+### Scenario A: Testing Connectivity under Istio
+
+#### 1. Kube-to-Kube (kube-kube)
+Tests direct communication from `order-service` to `payment-service` inside the cluster:
 ```bash
 kubectl exec -n mesh-services deploy/order-service -c order-service -- curl -s http://payment-service/
 ```
-
 **Expected Output:**
 ```json
 {"service":"payment-service","status":"ok"}
 ```
-*(Under the hood, the client sidecar proxy intercepts the plaintext call to `http://payment-service/` and wraps it in a secure mutual TLS tunnel directly targeting the destination sidecar proxy).*
 
-### 2. Kube-to-VM (kube-vm)
-This scenario tests communication from a containerized service inside the cluster to a service running on the external VM workload (e.g., `order-service` calling `vm-proxy`).
-
-Run the following command to execute a `curl` inside the `order-service` pod targeting the `vm-proxy` service:
+#### 2. Kube-to-VM (kube-vm)
+Tests communication from `order-service` inside the cluster to the Nginx VM service:
 ```bash
 kubectl exec -n mesh-services deploy/order-service -c order-service -- curl -s http://vm-proxy/
 ```
-
 **Expected Output:**
-The default HTML welcome page of the Nginx server running on the VM:
-```html
-<!DOCTYPE html>
-<html>
-<head>
-<title>Welcome to nginx!</title>
-...
-```
-*(Under the hood, the `order-service` sidecar routes the connection directly to the VM's public IP address on port 80 using strict mTLS. The VM's `iptables` redirects the inbound port 80 traffic to Envoy on port 15006, which terminates the mTLS connection and forwards it locally to the Nginx process).*
+Nginx welcome HTML page.
 
-### 3. VM-to-Kube (vm-kube)
-This scenario tests communication from the external VM workload to a containerized service in the cluster (e.g., the VM calling `order-service`).
-
-SSH into the VM (or execute a remote command via SSH) and run a `curl` targeting the Kubernetes DNS name of the service:
+#### 3. VM-to-Kube (vm-kube)
+Tests direct communication from the external VM to `order-service` inside the cluster:
 ```bash
-ssh root@188.166.183.114 "curl -s http://order-service.mesh-services.svc.cluster.local/"
+ssh root@<VM-IP> "curl -s http://order-service.mesh-services.svc.cluster.local/"
 ```
-
 **Expected Output:**
 ```json
 {"service":"order-service","status":"ok"}
 ```
-*(Under the hood, the VM's local `systemd-resolved` forwards DNS queries for `*.cluster.local` to Envoy's local DNS capture port `15053`. Envoy resolves the hostname and intercepts the TCP connection, routing it to the cluster's East-West gateway on port 15443. The Gateway performs SNI routing to pass the mTLS connection directly to the target pod sidecar).*
 
-### 4. Ambient-to-VM (ambient-vm) [KNOWN LIMITATION]
-This scenario tests communication from a sidecarless workload running in an Ambient-enabled namespace (`meshz-services`) to a VM workload running in a traditional sidecar-enabled namespace (`mesh-services`).
+#### 4. Transit Path Verification (VM -> K8s -> K8s)
+Tests calling the payment processor via the transit service from the VM:
+```bash
+ssh root@<VM-IP> "curl -s http://order-service.mesh-services.svc.cluster.local/pay"
+```
+**Expected Output:**
+```json
+{"service":"payment-service","transaction":"processed","mTLS":"ztunnel-secured"}
+```
 
-Exec into the `client-service` pod in the `meshz-services` namespace and curl the VM service:
+#### 5. Ambient-to-VM (ambient-vm) [KNOWN LIMITATION]
+Tests communication from Ambient `client-service` (in `meshz-services` namespace) to the VM:
 ```bash
 kubectl exec -n meshz-services deploy/client-service -- curl -s http://vm-proxy.mesh-services.svc.cluster.local/
 ```
-
 **Expected Output:**
-```text
-command terminated with exit code 56 (Connection reset by peer)
+`command terminated with exit code 56 (Connection reset by peer)`. This is a known limitation since `ztunnel` doesn't resolve VM WorkloadEntries.
+
+---
+
+### Scenario B: Testing Connectivity under Kuma
+
+In Kuma, all workloads in `mesh-services` and `meshz-services` namespaces are equipped with Kuma sidecar proxies. Inter-service DNS names use the `<service-name>_<namespace>_svc_<port>.mesh` naming convention.
+
+#### 1. Kube-to-Kube (kube-kube)
+Tests communication from the `client-service` pod (in `meshz-services`) to the `order-service` pod (in `mesh-services`):
+```bash
+kubectl exec -n meshz-services deploy/client-service -c client-service -- \
+  curl -s http://order-service_mesh-services_svc_80.mesh
+```
+**Expected Output:**
+```json
+{"service":"order-service","status":"ok"}
 ```
 
-**Description:**
-This failure is a known architectural limitation of hybrid Ambient-Sidecar meshes. The Layer 4 `ztunnel` in the client's Ambient namespace does not support resolving or routing to service endpoints backed by custom `WorkloadEntry` resources. Checking the client node's `ztunnel` logs will show:
-`warn access connection failed [...] error="no service for target address: <vm-proxy-cluster-ip>:80"`.
-For VM connectivity to work, target workloads must remain in standard Sidecar Mode (`istio-injection: enabled`).
+#### 2. Kube-to-VM (kube-vm)
+Tests communication from a pod to the Kuma VM proxy (`nginx-vm-kuma`) directly:
+```bash
+kubectl exec -n meshz-services deploy/client-service -c client-service -- \
+  curl -s http://nginx-vm-kuma.mesh/
+```
+**Expected Output:**
+Nginx welcome HTML page from the VM.
+
+#### 3. Transit Path Verification: Kube-to-VM via Order Service
+Tests calling the VM proxy via the `/vm` endpoint on `order-service` (acting as a reverse-proxy transit pod inside the cluster):
+```bash
+kubectl exec -n meshz-services deploy/client-service -c client-service -- \
+  curl -s http://order-service_mesh-services_svc_80.mesh/vm
+```
+**Expected Output:**
+Nginx welcome HTML page from the VM.
+
+#### 4. VM-to-Kube (vm-kube)
+Tests communication from the Kuma VM directly to `order-service` in the cluster:
+```bash
+ssh root@<VM-IP> "curl -s http://order-service_mesh-services_svc_80.mesh"
+```
+**Expected Output:**
+```json
+{"service":"order-service","status":"ok"}
+```
+
+#### 5. Transit Path Verification: VM-to-Kube Payment
+Tests calling the payment processor path `/pay` on `order-service` from the VM (proxies traffic from VM to `order-service` in k8s, which then calls `payment-service` in k8s):
+```bash
+ssh root@<VM-IP> "curl -s http://order-service_mesh-services_svc_80.mesh/pay"
+```
+**Expected Output:**
+```json
+{"service":"payment-service","transaction":"processed","mTLS":"ztunnel-secured"}
+```
 
 ---
 
@@ -315,3 +382,4 @@ For VM connectivity to work, target workloads must remain in standard Sidecar Mo
 
 For more information on virtual machine integration and architectural compatibility in an Istio Ambient Mesh environment, see:
 * [VM Ambient Mesh Compatibility & Architectural Gaps](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/docs/vm-ambient-compatibility.md)
+* [Kuma Architecture & Kong Mesh Comparison](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/docs/kuma_kong_mesh_comparison.md)

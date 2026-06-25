@@ -1,6 +1,6 @@
 type: Dataplane
 mesh: "{{ kuma_mesh }}"
-name: "{{ inventory_hostname }}"
+name: "{{ inventory_hostname }}.{{ vm_namespace }}"
 networking:
   address: "{{ ansible_host }}"
   inbound:

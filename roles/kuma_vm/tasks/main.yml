@@ -3,6 +3,12 @@
 # DEPLOY KUMA DATA PLANE PROXY ON VM (UNIVERSAL MODE)
 # ==============================================================================
 
+- name: Kuma VM | Clean up any existing transparent proxy rules from previous runs
+  ansible.builtin.command: /usr/local/bin/kumactl uninstall transparent-proxy
+  failed_when: false
+  tags:
+    - kuma_vm
+
 - name: Kuma VM | Update Apt Cache (Debian)
   ansible.builtin.apt:
     update_cache: true
@@ -10,6 +16,7 @@
   when: ansible_os_family == "Debian"
   tags:
     - kuma_vm
+
 
 - name: Kuma VM | Install Prerequisites (Debian)
   ansible.builtin.apt:
@@ -75,6 +82,27 @@
   tags:
     - kuma_vm
 
+- name: Kuma VM | Check if envoy binary exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/envoy
+  register: envoy_stat
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Check if coredns binary exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/coredns
+  register: coredns_stat
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Temporarily disable transparent proxy to allow downloads if binaries are missing
+  ansible.builtin.command: /usr/local/bin/kumactl uninstall transparent-proxy
+  failed_when: false
+  when: not kuma_dp_stat.stat.exists or not envoy_stat.stat.exists or not coredns_stat.stat.exists
+  tags:
+    - kuma_vm
+
 - name: Kuma VM | Download and extract Kuma binaries via installer script
   ansible.builtin.shell: |
     set -o pipefail
@@ -82,12 +110,12 @@
   args:
     chdir: /tmp
     executable: /bin/bash
-  when: not kuma_dp_stat.stat.exists
+  when: not kuma_dp_stat.stat.exists or not envoy_stat.stat.exists or not coredns_stat.stat.exists
   changed_when: true
   tags:
     - kuma_vm
 
-- name: Kuma VM | Install kuma-dp and kumactl binaries
+- name: Kuma VM | Install kuma-dp, kumactl, coredns, and envoy binaries
   ansible.builtin.copy:
     src: "/tmp/kuma-{{ kuma_version }}/bin/{{ item }}"
     dest: "/usr/local/bin/{{ item }}"
@@ -96,7 +124,9 @@
   loop:
     - kuma-dp
     - kumactl
-  when: not kuma_dp_stat.stat.exists
+    - coredns
+    - envoy
+  when: not kuma_dp_stat.stat.exists or not envoy_stat.stat.exists or not coredns_stat.stat.exists
   tags:
     - kuma_vm
 
@@ -106,7 +136,7 @@
 
 - name: Kuma VM | Extract Kuma Control Plane CA Certificate
   ansible.builtin.shell: >
-    kubectl get secret kuma-control-plane-tls -n kuma-system -o jsonpath='{.data.ca\.crt}'
+    kubectl get secret kuma-tls-cert -n kuma-system -o jsonpath='{.data.ca\.crt}'
   register: kuma_ca_raw
   delegate_to: "{{ groups['control_plane'][0] }}"
   run_once: true
@@ -117,7 +147,7 @@
 
 - name: Kuma VM | Fallback to tls.crt if ca.crt is not in secret
   ansible.builtin.shell: >
-    kubectl get secret kuma-control-plane-tls -n kuma-system -o jsonpath='{.data.tls\.crt}'
+    kubectl get secret kuma-tls-cert -n kuma-system -o jsonpath='{.data.tls\.crt}'
   register: kuma_tls_raw
   delegate_to: "{{ groups['control_plane'][0] }}"
   run_once: true
@@ -132,10 +162,46 @@
   tags:
     - kuma_vm
 
-- name: Kuma VM | Generate Kuma Dataplane Token on Control Plane
+- name: Kuma VM | Extract Admin User Token
   ansible.builtin.shell: >
-    kubectl exec -n kuma-system deploy/kuma-control-plane -c kuma-control-plane --
-    kumactl generate dataplane-token --name {{ inventory_hostname }} --mesh {{ kuma_mesh }}
+    kubectl get secret admin-user-token -n kuma-system -o jsonpath='{.data.value}' | base64 -d
+  register: kuma_admin_token
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  changed_when: false
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Get Kuma Control Plane Cluster IP
+  ansible.builtin.shell: >
+    kubectl get svc -n kuma-system kuma-control-plane -o jsonpath='{.spec.clusterIP}'
+  register: kuma_cp_cluster_ip
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  changed_when: false
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Configure kumactl on Control Plane
+  ansible.builtin.command: >
+    /usr/local/bin/kumactl config control-planes add
+    --name k8s-mesh
+    --address http://{{ kuma_cp_cluster_ip.stdout }}:5681
+    --auth-type=tokens
+    --auth-conf token={{ kuma_admin_token.stdout }}
+    --overwrite
+  delegate_to: "{{ groups['control_plane'][0] }}"
+  run_once: true
+  changed_when: true
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Generate Kuma Dataplane Token on Control Plane
+  ansible.builtin.command: >
+    /usr/local/bin/kumactl generate dataplane-token
+    --name {{ inventory_hostname }}.{{ vm_namespace }}
+    --mesh {{ kuma_mesh }}
+    --valid-for 87600h
   register: kuma_token_raw
   delegate_to: "{{ groups['control_plane'][0] }}"
   changed_when: false
@@ -173,7 +239,7 @@
     owner: kuma-dp
     group: kuma-dp
     mode: '0644'
-  notify: restart kuma-dp
+  register: kuma_ca_cert_copy
   tags:
     - kuma_vm
 
@@ -184,7 +250,7 @@
     owner: kuma-dp
     group: kuma-dp
     mode: '0600'
-  notify: restart kuma-dp
+  register: kuma_token_copy
   tags:
     - kuma_vm
 
@@ -207,7 +273,7 @@
     owner: kuma-dp
     group: kuma-dp
     mode: '0644'
-  notify: restart kuma-dp
+  register: kuma_dp_config
   tags:
     - kuma_vm
 
@@ -218,22 +284,13 @@
     owner: root
     group: root
     mode: '0644'
-  notify: restart kuma-dp
+  register: kuma_service_template
   tags:
     - kuma_vm
 
 # --------------------------------------------------------------------------
 # Transparent Proxy Configuration & Start Services
 # --------------------------------------------------------------------------
-
-- name: Kuma VM | Configure Transparent Proxy Rules
-  ansible.builtin.command: >
-    /usr/local/bin/kumactl install transparent-proxy
-    --kuma-dp-user kuma-dp
-    --exclude-inbound-ports 22
-  changed_when: true
-  tags:
-    - kuma_vm
 
 - name: Kuma VM | Enable and Start Nginx
   ansible.builtin.systemd:
@@ -251,3 +308,30 @@
     daemon_reload: true
   tags:
     - kuma_vm
+
+- name: Kuma VM | Restart Kuma DP if configuration changed
+  ansible.builtin.systemd:
+    name: kuma-dp
+    state: restarted
+  when: >
+    kuma_ca_cert_copy.changed or
+    kuma_token_copy.changed or
+    kuma_dp_config.changed or
+    kuma_service_template.changed
+  tags:
+    - kuma_vm
+
+- name: Kuma VM | Configure Transparent Proxy Rules
+  ansible.builtin.command: >
+    /usr/local/bin/kumactl install transparent-proxy
+    --kuma-dp-user kuma-dp
+    --exclude-inbound-ports 22
+    --exclude-outbound-ports 22
+    --redirect-dns
+  async: 60
+  poll: 0
+  changed_when: true
+  tags:
+    - kuma_vm
+
+

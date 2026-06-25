@@ -1,0 +1,72 @@
+---
+apiVersion: kuma.io/v1alpha1
+kind: MeshTrafficPermission
+metadata:
+  name: client-to-order
+  namespace: kuma-system
+  labels:
+    kuma.io/mesh: default
+spec:
+  targetRef:
+    kind: MeshService
+    name: order-service_mesh-services_svc_80
+  from:
+    - targetRef:
+        kind: MeshService
+        name: client-service_meshz-services_svc_80
+      default:
+        action: Allow
+---
+apiVersion: kuma.io/v1alpha1
+kind: MeshTrafficPermission
+metadata:
+  name: order-to-payment
+  namespace: kuma-system
+  labels:
+    kuma.io/mesh: default
+spec:
+  targetRef:
+    kind: MeshService
+    name: payment-service_mesh-services_svc_80
+  from:
+    - targetRef:
+        kind: MeshService
+        name: order-service_mesh-services_svc_80
+      default:
+        action: Allow
+---
+apiVersion: kuma.io/v1alpha1
+kind: MeshTrafficPermission
+metadata:
+  name: order-to-vm
+  namespace: kuma-system
+  labels:
+    kuma.io/mesh: default
+spec:
+  targetRef:
+    kind: MeshService
+    name: nginx-vm-kuma
+  from:
+    - targetRef:
+        kind: MeshService
+        name: order-service_mesh-services_svc_80
+      default:
+        action: Allow
+---
+apiVersion: kuma.io/v1alpha1
+kind: MeshTrafficPermission
+metadata:
+  name: vm-to-order
+  namespace: kuma-system
+  labels:
+    kuma.io/mesh: default
+spec:
+  targetRef:
+    kind: MeshService
+    name: order-service_mesh-services_svc_80
+  from:
+    - targetRef:
+        kind: MeshService
+        name: nginx-vm-kuma
+      default:
+        action: Allow

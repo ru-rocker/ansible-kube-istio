@@ -1,112 +1,18 @@
 ---
-- name: Security Guardrails | Enforce Strict Mutual TLS (mTLS) Global Policy
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: security.istio.io/v1beta1
-      kind: PeerAuthentication
-      metadata:
-        name: default-mtls
-        namespace: istio-system
-      spec:
-        mtls:
-          mode: STRICT
-  when:
-    - inventory_hostname in groups['control_plane']
-    - enforce_strict_mtls | bool
+# ==============================================================================
+# SECURITY GUARDRAILS ENTRYPOINT
+# ==============================================================================
+
+- name: Include Istio Security Guardrails
+  ansible.builtin.include_tasks: istio.yml
+  when: mesh_type == "istio"
   tags:
     - security
     - guardrails
 
-- name: Security Guardrails | Deploy Global Default-Deny AuthorizationPolicy
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: security.istio.io/v1beta1
-      kind: AuthorizationPolicy
-      metadata:
-        name: global-default-deny
-        namespace: istio-system
-      spec:
-        {} # Empty spec denotes default-deny for all traffic in mesh
-  when:
-    - inventory_hostname in groups['control_plane']
-    - enable_default_deny | bool
-  tags:
-    - security
-    - guardrails
-
-- name: Security Guardrails | Enable Istio Sidecar Injection on Target Namespace
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: "{{ vm_namespace }}"
-        labels:
-          istio-injection: enabled
-  when: inventory_hostname in groups['control_plane']
-  tags:
-    - security
-    - guardrails
-
-- name: Security Guardrails | Create VM Proxy ServiceAccount
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: v1
-      kind: ServiceAccount
-      metadata:
-        name: "{{ vm_service_account_name }}"
-        namespace: "{{ vm_namespace }}"
-  when: inventory_hostname in groups['control_plane']
-  tags:
-    - security
-    - guardrails
-
-- name: Security Guardrails | Create VM Proxy WorkloadGroup
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: networking.istio.io/v1
-      kind: WorkloadGroup
-      metadata:
-        name: "{{ vm_auto_register_group }}"
-        namespace: "{{ vm_namespace }}"
-      spec:
-        metadata:
-          labels:
-            app: vm-proxy
-            version: v1
-          annotations:
-            traffic.sidecar.istio.io/includeInboundPorts: "{{ vm_inbound_ports }}"
-            traffic.sidecar.istio.io/excludeInboundPorts: "22"
-        template:
-          serviceAccount: "{{ vm_service_account_name }}"
-          network: "{{ vm_network }}"
-          ports:
-            http: "{{ vm_inbound_ports | int }}"
-  when: inventory_hostname in groups['control_plane']
-  tags:
-    - security
-    - guardrails
-
-- name: Security Guardrails | Verify Global Policies Status
-  ansible.builtin.command: kubectl get peerauthentications,authorizationpolicies -n istio-system
-  register: security_policies_status
-  changed_when: false
-  when: inventory_hostname in groups['control_plane']
-  tags:
-    - security
-    - guardrails
-
-- name: Security Guardrails | Log Security Status
-  ansible.builtin.debug:
-    msg: "Active Security Policies:\n{{ security_policies_status.stdout }}"
-  when:
-    - inventory_hostname in groups['control_plane']
-    - security_policies_status.stdout is defined
+- name: Include Kuma Security Guardrails
+  ansible.builtin.include_tasks: kuma.yml
+  when: mesh_type == "kuma"
   tags:
     - security
     - guardrails

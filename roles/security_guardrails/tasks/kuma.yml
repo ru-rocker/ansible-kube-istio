@@ -1,0 +1,112 @@
+---
+- name: Kuma Security | Enable Kuma Sidecar Injection on Target Namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ vm_namespace }}"
+        labels:
+          kuma.io/sidecar-injection: enabled
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - security
+    - guardrails
+
+- name: Kuma Security | Enable Kuma Sidecar Injection on meshz-services Namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: meshz-services
+        labels:
+          kuma.io/sidecar-injection: enabled
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - security
+    - guardrails
+
+- name: Kuma Security | Enable mTLS on Default Mesh
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: kuma.io/v1alpha1
+      kind: Mesh
+      metadata:
+        name: "{{ kuma_mesh }}"
+      spec:
+        mtls:
+          enabledBackend: ca-1
+          backends:
+            - name: ca-1
+              type: builtin
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enforce_strict_mtls | bool
+  tags:
+    - security
+    - guardrails
+
+
+- name: Kuma Security | Remove default allow-all TrafficPermission if it exists
+  kubernetes.core.k8s:
+    state: absent
+    apiVersion: kuma.io/v1alpha1
+    kind: TrafficPermission
+    name: allow-all-default
+    namespace: kuma-system
+  failed_when: false
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enable_default_deny | bool
+  tags:
+    - security
+    - guardrails
+
+- name: Kuma Security | Deploy Default-Deny MeshTrafficPermission
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: kuma.io/v1alpha1
+      kind: MeshTrafficPermission
+      metadata:
+        name: deny-all
+        namespace: kuma-system
+        labels:
+          kuma.io/mesh: "{{ kuma_mesh }}"
+      spec:
+        targetRef:
+          kind: Mesh
+        from:
+          - targetRef:
+              kind: Mesh
+            default:
+              action: Deny
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enable_default_deny | bool
+  tags:
+    - security
+    - guardrails
+
+- name: Kuma Security | Verify Kuma Security Policies
+  ansible.builtin.command: kubectl get meshtrafficpermissions -n kuma-system
+  register: kuma_policies_status
+  changed_when: false
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - security
+    - guardrails
+
+- name: Kuma Security | Log Security Status
+  ansible.builtin.debug:
+    msg: "Active Kuma Security Policies:\n{{ kuma_policies_status.stdout }}"
+  when:
+    - inventory_hostname in groups['control_plane']
+    - kuma_policies_status.stdout is defined
+  tags:
+    - security
+    - guardrails

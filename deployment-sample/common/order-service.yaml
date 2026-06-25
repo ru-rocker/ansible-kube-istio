@@ -52,8 +52,18 @@ data:
       location /pay {
         resolver 10.96.0.10 valid=5s;
         set $upstream_endpoint http://payment-service.mesh-services.svc.cluster.local/process;
+        proxy_http_version 1.1;
         proxy_pass $upstream_endpoint;
         proxy_set_header Host payment-service.mesh-services.svc.cluster.local;
+      }
+
+      # Calls VM service in Kuma mesh
+      location /vm {
+        resolver 10.96.0.10 valid=5s;
+        set $upstream_endpoint http://nginx-vm-kuma.mesh/;
+        proxy_http_version 1.1;
+        proxy_pass $upstream_endpoint;
+        proxy_set_header Host nginx-vm-kuma.mesh;
       }
     }
 ---
