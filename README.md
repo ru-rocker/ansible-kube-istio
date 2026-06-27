@@ -17,6 +17,7 @@ This repository contains Ansible playbooks and roles to deploy a production-read
   - `security_guardrails`: Configure strict mTLS and zero-trust default-deny authorization policies.
   - `kuma`: Deploy Kuma Control Plane using Helm on Kubernetes.
   - `kuma_vm`: Setup and register VM workloads with Kuma in Universal Mode.
+  - `argo`: Install Argo CD and Argo Rollouts via Helm with sidecar injection and ingress gateway routing.
 - [GEMINI.md](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/GEMINI.md) - Project-specific guardrails, OS/hardware prerequisites, and security standards.
 - [docs/vm-ambient-compatibility.md](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/docs/vm-ambient-compatibility.md) - Compatibility status, gaps, and alternatives for VM integration in Istio Ambient Mesh.
 - [docs/kuma_kong_mesh_comparison.md](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/docs/kuma_kong_mesh_comparison.md) - Architectural and cost comparison of Kuma and Kong Mesh vs. Istio.
@@ -123,10 +124,16 @@ The playbook uses structured tags for targeted executions:
   ansible-playbook -i inventory/hosts.ini site.yml --tags security
   ```
 
+- **Argo CD & Argo Rollouts Setup Only** (downloads Helm charts, sets up sidecar-injected namespaces, installs controllers, and configs ingress routing):
+  ```bash
+  ansible-playbook -i inventory/hosts.ini site.yml --tags argo
+  ```
+
 - **All Guardrails Validation** (combines preflight checks and security guardrails):
   ```bash
   ansible-playbook -i inventory/hosts.ini site.yml --tags guardrails
   ```
+
 
 
 ### 5. Overriding Configuration Variables
@@ -375,6 +382,27 @@ ssh root@<VM-IP> "curl -s http://order-service_mesh-services_svc_80.mesh/pay"
 ```json
 {"service":"payment-service","transaction":"processed","mTLS":"ztunnel-secured"}
 ```
+
+---
+
+## Deploying & Securing Argo CD & Argo Rollouts
+
+The repository includes a dedicated `argo` role that installs Argo CD and Argo Rollouts, integrating them directly with the active service mesh (`mesh_type: "istio"` or `mesh_type: "kuma"`).
+
+### 1. Variables Configuration
+Ensure `argo_enabled: true` is configured in [group_vars/all.yml](file:///Users/ricky/Documents/workspaces/workspace-devops/ansible-kube-istio/group_vars/all.yml). You can customize versions and settings as needed.
+
+### 2. Execution
+Run the playbook targeting the `argo` tag to initialize the controllers and components:
+```bash
+ansible-playbook -i inventory/hosts.ini site.yml --tags argo
+```
+
+### 3. Service Mesh & Zero-Trust Policies
+When the main playbook or the `security` tag is run, zero-trust policies for the Argo namespaces are applied:
+- **Strict mTLS:** The `argocd` and `argo-rollouts` namespaces are configured with strict mTLS (`mode: STRICT` in Istio).
+- **Intra-Namespace Communication:** Zero-trust namespace boundary policies are created (e.g. `AuthorizationPolicy` in Istio / `MeshTrafficPermission` in Kuma) to allow internal components like the server to talk to Redis and repo-server.
+- **Console Ingress (Istio only):** Deploys an Istio `Gateway` and `VirtualService` targeting the `cross-network-gateway` on port `80` to route external requests for `argo_cd_server_host` (e.g., `argocd.example.com`) directly to `argocd-server`.
 
 ---
 

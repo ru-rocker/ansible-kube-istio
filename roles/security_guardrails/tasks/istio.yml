@@ -92,6 +92,123 @@
     - security
     - guardrails
 
+- name: Security Guardrails | Enforce Strict mTLS for Argo CD Namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: security.istio.io/v1beta1
+      kind: PeerAuthentication
+      metadata:
+        name: argocd-strict-mtls
+        namespace: "{{ argo_namespace }}"
+      spec:
+        mtls:
+          mode: STRICT
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enforce_strict_mtls | bool
+    - argo_enabled | bool
+  tags:
+    - security
+    - guardrails
+    - argo
+
+- name: Security Guardrails | Enforce Strict mTLS for Argo Rollouts Namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: security.istio.io/v1beta1
+      kind: PeerAuthentication
+      metadata:
+        name: argo-rollouts-strict-mtls
+        namespace: "{{ argo_rollouts_namespace }}"
+      spec:
+        mtls:
+          mode: STRICT
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enforce_strict_mtls | bool
+    - argo_enabled | bool
+  tags:
+    - security
+    - guardrails
+    - argo
+
+- name: Security Guardrails | Allow Intra-Namespace Traffic for Argo CD
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: security.istio.io/v1beta1
+      kind: AuthorizationPolicy
+      metadata:
+        name: argocd-allow-intra-namespace
+        namespace: "{{ argo_namespace }}"
+      spec:
+        action: ALLOW
+        rules:
+          - from:
+              - source:
+                  namespaces: ["{{ argo_namespace }}"]
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enable_default_deny | bool
+    - argo_enabled | bool
+  tags:
+    - security
+    - guardrails
+    - argo
+
+- name: Security Guardrails | Allow Gateway Ingress Traffic to Argo CD Server
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: security.istio.io/v1beta1
+      kind: AuthorizationPolicy
+      metadata:
+        name: argocd-allow-ingress-to-server
+        namespace: "{{ argo_namespace }}"
+      spec:
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: argocd-server
+        action: ALLOW
+        rules:
+          - from:
+              - source:
+                  namespaces: ["istio-system"]
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enable_default_deny | bool
+    - argo_enabled | bool
+  tags:
+    - security
+    - guardrails
+    - argo
+
+- name: Security Guardrails | Allow Intra-Namespace Traffic for Argo Rollouts
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: security.istio.io/v1beta1
+      kind: AuthorizationPolicy
+      metadata:
+        name: argo-rollouts-allow-intra-namespace
+        namespace: "{{ argo_rollouts_namespace }}"
+      spec:
+        action: ALLOW
+        rules:
+          - from:
+              - source:
+                  namespaces: ["{{ argo_rollouts_namespace }}"]
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enable_default_deny | bool
+    - argo_enabled | bool
+  tags:
+    - security
+    - guardrails
+    - argo
+
 - name: Security Guardrails | Verify Global Policies Status
   ansible.builtin.command: kubectl get peerauthentications,authorizationpolicies -n istio-system
   register: security_policies_status

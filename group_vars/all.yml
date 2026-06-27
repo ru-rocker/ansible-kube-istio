@@ -43,3 +43,10 @@ kuma_vm_service_name: "nginx-vm-kuma"
 kuma_vm_inbound_port: 80
 kuma_vm_service_port: 80
 
+# Argo CD & Rollouts Configuration
+argo_enabled: true
+argo_namespace: "argocd"
+argo_rollouts_namespace: "argo-rollouts"
+argo_cd_version: "7.1.3"
+argo_rollouts_version: "2.37.2"
+argo_cd_server_host: "argocd.example.com"

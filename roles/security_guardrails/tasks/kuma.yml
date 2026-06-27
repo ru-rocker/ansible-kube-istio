@@ -29,6 +29,43 @@
     - security
     - guardrails
 
+- name: Kuma Security | Enable Kuma Sidecar Injection on Argo CD Namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ argo_namespace }}"
+        labels:
+          kuma.io/sidecar-injection: enabled
+  when:
+    - inventory_hostname in groups['control_plane']
+    - argo_enabled | bool
+  tags:
+    - security
+    - guardrails
+    - argo
+
+- name: Kuma Security | Enable Kuma Sidecar Injection on Argo Rollouts Namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ argo_rollouts_namespace }}"
+        labels:
+          kuma.io/sidecar-injection: enabled
+  when:
+    - inventory_hostname in groups['control_plane']
+    - argo_enabled | bool
+  tags:
+    - security
+    - guardrails
+    - argo
+
+
 - name: Kuma Security | Enable mTLS on Default Mesh
   kubernetes.core.k8s:
     state: present
@@ -91,6 +128,70 @@
   tags:
     - security
     - guardrails
+
+- name: Kuma Security | Allow Intra-Namespace Traffic for Argo CD
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: kuma.io/v1alpha1
+      kind: MeshTrafficPermission
+      metadata:
+        name: argocd-intra-namespace
+        namespace: kuma-system
+        labels:
+          kuma.io/mesh: "{{ kuma_mesh }}"
+      spec:
+        targetRef:
+          kind: MeshSubset
+          tags:
+            kuma.io/namespace: "{{ argo_namespace }}"
+        from:
+          - targetRef:
+              kind: MeshSubset
+              tags:
+                kuma.io/namespace: "{{ argo_namespace }}"
+            default:
+              action: Allow
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enable_default_deny | bool
+    - argo_enabled | bool
+  tags:
+    - security
+    - guardrails
+    - argo
+
+- name: Kuma Security | Allow Intra-Namespace Traffic for Argo Rollouts
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: kuma.io/v1alpha1
+      kind: MeshTrafficPermission
+      metadata:
+        name: argo-rollouts-intra-namespace
+        namespace: kuma-system
+        labels:
+          kuma.io/mesh: "{{ kuma_mesh }}"
+      spec:
+        targetRef:
+          kind: MeshSubset
+          tags:
+            kuma.io/namespace: "{{ argo_rollouts_namespace }}"
+        from:
+          - targetRef:
+              kind: MeshSubset
+              tags:
+                kuma.io/namespace: "{{ argo_rollouts_namespace }}"
+            default:
+              action: Allow
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enable_default_deny | bool
+    - argo_enabled | bool
+  tags:
+    - security
+    - guardrails
+    - argo
 
 - name: Kuma Security | Verify Kuma Security Policies
   ansible.builtin.command: kubectl get meshtrafficpermissions -n kuma-system

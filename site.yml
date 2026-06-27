@@ -24,6 +24,11 @@
       tags:
         - kuma
 
+    - role: argo
+      when: argo_enabled | bool
+      tags:
+        - argo
+
     - role: security_guardrails
       tags:
         - security

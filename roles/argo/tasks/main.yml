@@ -1,0 +1,175 @@
+---
+# ==============================================================================
+# DEPLOY ARGO CD & ARGO ROLLOUTS WITH SERVICE MESH INTEGRATION
+# ==============================================================================
+
+- name: Argo | Create Namespaces with Mesh Sidecar Injection Labels
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ item }}"
+        labels:
+          # Apply the correct sidecar injection label depending on active mesh
+          "{{ 'istio-injection' if mesh_type == 'istio' else 'kuma.io/sidecar-injection' }}": "enabled"
+  loop:
+    - "{{ argo_namespace }}"
+    - "{{ argo_rollouts_namespace }}"
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - argo
+
+- name: Argo | Add Argo Helm Repository
+  kubernetes.core.helm_repository:
+    name: argo
+    repo_url: https://argoproj.github.io/argo-helm
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - argo
+
+- name: Argo | Update Helm Repositories
+  ansible.builtin.command: helm repo update
+  changed_when: false
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - argo
+
+- name: Argo | Install Argo CD
+  kubernetes.core.helm:
+    name: argo-cd
+    chart_ref: argo/argo-cd
+    chart_version: "{{ argo_cd_version }}"
+    release_namespace: "{{ argo_namespace }}"
+    values:
+      server:
+        extraArgs:
+          - "--insecure"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      repoServer:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      controller:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+      redis:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+    wait: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - argo
+
+- name: Argo | Install Argo Rollouts
+  kubernetes.core.helm:
+    name: argo-rollouts
+    chart_ref: argo/argo-rollouts
+    chart_version: "{{ argo_rollouts_version }}"
+    release_namespace: "{{ argo_rollouts_namespace }}"
+    values:
+      controller:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+    wait: true
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - argo
+
+# ==============================================================================
+# ISTIO INGRESS ROUTING FOR ARGO CD
+# ==============================================================================
+
+- name: Argo | Deploy Istio Gateway for Argo CD UI/API
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.istio.io/v1beta1
+      kind: Gateway
+      metadata:
+        name: argo-gateway
+        namespace: "{{ argo_namespace }}"
+      spec:
+        selector:
+          istio: eastwestgateway
+        servers:
+          - port:
+              number: 80
+              name: http
+              protocol: HTTP
+            hosts:
+              - "{{ argo_cd_server_host }}"
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when:
+    - inventory_hostname in groups['control_plane']
+    - mesh_type == "istio"
+  tags:
+    - argo
+    - argo-routing
+
+- name: Argo | Deploy Istio VirtualService for Argo CD UI/API
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: networking.istio.io/v1beta1
+      kind: VirtualService
+      metadata:
+        name: argo-virtualservice
+        namespace: "{{ argo_namespace }}"
+      spec:
+        hosts:
+          - "{{ argo_cd_server_host }}"
+        gateways:
+          - argo-gateway
+        http:
+          - match:
+              - uri:
+                  prefix: /
+            route:
+              - destination:
+                  host: argocd-server
+                  port:
+                    number: 80
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when:
+    - inventory_hostname in groups['control_plane']
+    - mesh_type == "istio"
+  tags:
+    - argo
+    - argo-routing
