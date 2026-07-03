@@ -1,0 +1,19 @@
+apiVersion: networking.istio.io/v1
+kind: WorkloadGroup
+metadata:
+  name: vm-proxy-group
+  namespace: mesh-services
+spec:
+  metadata:
+    labels:
+      app: vm-proxy
+      version: v1
+      istio.io/dataplane-mode: none  # Enforce sidecar-only mode on VM
+    annotations:
+      traffic.sidecar.istio.io/includeInboundPorts: "80"
+      traffic.sidecar.istio.io/excludeInboundPorts: "22"
+  template:
+    serviceAccount: vm-proxy-sa
+    network: vm-network # <--- Explicitly sets VM network to differ from cluster network
+    ports:
+      http: 80

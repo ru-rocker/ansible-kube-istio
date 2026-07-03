@@ -59,36 +59,69 @@ Using a private VPC subnet, the VM bypasses NAT boundaries and routes directly t
 
 ## 3. Data Plane Configuration Guide
 
-### Step 1: Choose VM-to-Cluster Routing Architecture
-If the VM and the cluster nodes share an internal private network (e.g. `10.130.0.0/16` on `eth1`), you have two options for routing VM-to-Kube traffic:
+Before starting, choose either **Option A (Direct Routing)** or **Option B (Private Gateway Routing)** below.
 
-#### Option A: Direct Routing via Node Gateway (Current Playbook Setup)
-* **How it works:** The VM directly targets the Kubernetes internal Pod and Service IP ranges.
-* **Pros/Cons:** Direct point-to-point traffic, but requires manual static routing table configurations (`ip route`) on the VM OS.
-* **VM Route Commands:**
-  ```bash
-  # Route cluster CIDRs through the private IP of a worker node
-  sudo ip route replace 10.244.0.0/16 via <WORKER_NODE_PRIVATE_IP> dev eth1
-  sudo ip route replace 10.96.0.0/12 via <WORKER_NODE_PRIVATE_IP> dev eth1
-  ```
+---
 
-#### Option B: Private Gateway Routing (Zero-Route VM Setup)
-* **How it works:** VM-to-Kube traffic is routed through the cluster's East-West Gateway. The gateway is exposed on a private NodePort IP (`10.130.12.254:15443`) in the same local subnet as the VM.
-* **Pros/Cons:** **Zero configuration needed on the VM routing table** (the VM only contacts IPs within its native local subnet). Requires setting `externalIPs` on the gateway service.
-* **Kubernetes Gateway Service Patch:**
-  ```yaml
-  spec:
-    externalIPs:
-    - 10.130.12.254 # Maps the gateway directly to the private node IP
-  ```
-* **VM WorkloadGroup/Bootstrap network configuration:** Set the VM's network to a value distinct from the cluster (e.g., `vm-network`), prompting the control plane to route VM-to-Pod traffic through the gateway automatically.
+### Track A: Step-by-Step Setup for Option A (Direct Node Routing)
+Use this track if you want direct point-to-point network communication to Pod/Service CIDRs and are okay adding static IP routes to your VM's OS routing table.
 
-### Step 2: VM Bootstrap Configuration (`/var/lib/istio/envoy/cluster.env`)
-The VM proxy must have HBONE capability flags enabled to communicate with the Ambient control plane:
+#### 1. Configure Egress Routes on the VM
+Add routing rules directing cluster networks through the private IP of a cluster node:
+```bash
+sudo ip route replace 10.244.0.0/16 via <WORKER_NODE_PRIVATE_IP> dev eth1
+sudo ip route replace 10.96.0.0/12 via <WORKER_NODE_PRIVATE_IP> dev eth1
+```
+
+#### 2. Configure VM Bootstrap (`/var/lib/istio/envoy/cluster.env`)
+Leave network empty (`""`) and enable HBONE support:
 ```ini
 ISTIO_META_ENABLE_HBONE=true
+ISTIO_META_NETWORK=
 ```
-Restart the service to load new configurations:
+
+#### 3. Apply WorkloadGroup
+Ensure `spec.template.network` is set to `""` in your WorkloadGroup:
+```yaml
+spec:
+  template:
+    network: "" # Direct connection to cluster network
+```
+
+---
+
+### Track B: Step-by-Step Setup for Option B (Private Gateway Routing)
+Use this track if you want **zero routing changes on the VM** (the VM will only talk to IPs in its local private subnet).
+
+#### 1. Associate the Gateway with the Node Private IP
+Patch the `cross-network-gateway-istio` service in `istio-system` namespace. Assign the private IP of your worker/gateway node to the `externalIPs` list:
+```yaml
+# Apply via: kubectl patch svc cross-network-gateway-istio -n istio-system --patch-file gateway-service-patch.yaml
+spec:
+  externalIPs:
+  - 10.130.12.254 # Replace with your worker node's private IP
+```
+
+#### 2. Configure VM Bootstrap (`/var/lib/istio/envoy/cluster.env`)
+Assign the VM to a distinct network named `vm-network` and enable HBONE support:
+```ini
+ISTIO_META_ENABLE_HBONE=true
+ISTIO_META_NETWORK=vm-network
+```
+
+#### 3. Apply WorkloadGroup
+Ensure `spec.template.network` is set to `vm-network` in your WorkloadGroup:
+```yaml
+spec:
+  template:
+    network: vm-network # Tells istiod to route via the cross-network gateway
+```
+
+---
+
+### Common Setup Steps (Required for both Tracks)
+
+#### 4. Restart Istio Sidecar Agent on the VM
 ```bash
 sudo systemctl restart istio
 ```
