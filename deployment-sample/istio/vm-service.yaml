@@ -14,3 +14,14 @@ spec:
     targetPort: 80
   selector:
     app: vm-proxy
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: vm-proxy-dr
+  namespace: mesh-services
+spec:
+  host: vm-proxy.mesh-services.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL

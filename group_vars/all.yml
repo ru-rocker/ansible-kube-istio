@@ -6,7 +6,7 @@ min_disk_gb: 10
 disable_swap_automatically: true
 
 # Service Mesh Type Configuration (istio or kuma)
-mesh_type: "kuma"
+mesh_type: "istio"
 
 # Kubernetes Configuration
 kubernetes_minor_version: "v1.31"
@@ -26,7 +26,7 @@ vm_service_account_name: "vm-proxy-sa"
 vm_namespace: "mesh-services"
 vm_canonical_service: "nginx-vm-proxy"
 vm_service_cidr: "*"
-vm_network: "vm-network"
+vm_network: ""
 vm_inbound_ports: "80"
 vm_auto_register_group: "vm-proxy-group"
 vm_dns_capture: true
@@ -44,7 +44,7 @@ kuma_vm_inbound_port: 80
 kuma_vm_service_port: 80
 
 # Argo CD & Rollouts Configuration
-argo_enabled: true
+argo_enabled: false
 argo_namespace: "argocd"
 argo_rollouts_namespace: "argo-rollouts"
 argo_cd_version: "7.1.3"

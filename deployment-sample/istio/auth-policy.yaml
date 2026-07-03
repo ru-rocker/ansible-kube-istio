@@ -42,6 +42,12 @@ spec:
 # istiod cannot resolve workload labels (like app: vm-proxy) on its connection.
 # Therefore, we omit the selector field so that this ALLOW policy applies
 # to all workloads in the namespace, including the VM proxy.
+#
+# Two rules are needed:
+#   Rule 1 - Allows mTLS-authenticated traffic from known principals (standard mesh traffic).
+#   Rule 2 - Allows unauthenticated (plaintext) traffic on port 80. This is required because
+#            the Waypoint→VM hop is plaintext when the VM is on a public IP (no HBONE tunnel).
+#            The VM sidecar operates in PERMISSIVE mTLS mode to accept this traffic.
 apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy
 metadata:
@@ -54,6 +60,11 @@ spec:
     - source:
         principals:
         - "cluster.local/ns/mesh-services/sa/default"
+        - "cluster.local/ns/meshz-services/sa/default"
+        - "cluster.local/ns/mesh-services/sa/waypoint"
     to:
+    - operation:
+        ports: ["80"]
+  - to:
     - operation:
         ports: ["80"]

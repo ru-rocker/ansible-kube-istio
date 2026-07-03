@@ -3,6 +3,13 @@
   hosts: k8s_cluster
   become: true
   gather_facts: true
+  any_errors_fatal: true
+  module_defaults:
+    kubernetes.core.k8s:
+      kubeconfig: /root/.kube/config
+    kubernetes.core.helm:
+      kubeconfig: /root/.kube/config
+
 
   roles:
     - role: preflight

@@ -8,6 +8,7 @@ spec:
     labels:
       app: vm-proxy
       version: v1
+      istio.io/dataplane-mode: none
     annotations:
       # The Istio VM sidecar is application-agnostic. This tells it which
       # inbound application port to intercept and protect with mesh mTLS.
@@ -17,7 +18,7 @@ spec:
       traffic.sidecar.istio.io/excludeInboundPorts: "22"
   template:
     serviceAccount: vm-proxy-sa
-    network: vm-network
+    network: ""
     ports:
       http: 80
 ---

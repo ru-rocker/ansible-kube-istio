@@ -1,0 +1,63 @@
+---
+- name: Deploy Sample Apps and Configurations
+  hosts: control_plane
+  become: true
+  module_defaults:
+    kubernetes.core.k8s:
+      kubeconfig: /root/.kube/config
+  tasks:
+    - name: Copy sample files to master-node
+      ansible.builtin.copy:
+        src: deployment-sample/
+        dest: /tmp/deployment-sample/
+        mode: '0644'
+
+    - name: Apply Order Service
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/deployment-sample/common/order-service.yaml
+
+    - name: Apply Payment Service
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/deployment-sample/common/payment-service.yaml
+
+    - name: Apply Ambient Client
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/deployment-sample/common/ambient-client.yaml
+
+    - name: Apply East-West Gateway
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/deployment-sample/istio/eastwest-gateway.yaml
+
+    - name: Patch cross-network-gateway NodePort
+      ansible.builtin.command: >
+        kubectl patch service cross-network-gateway-istio -n istio-system
+        --type='merge' -p '{"spec": {"type": "NodePort", "ports": [{"name": "tls-istiod", "port": 15012, "nodePort": 30185}]}}'
+
+    - name: Apply Istiod Route
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/deployment-sample/istio/istiod-route.yaml
+
+    - name: Apply Gateway Auth Policy
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/deployment-sample/istio/gateway-auth-policy.yaml
+
+    - name: Apply VM WorkloadGroup
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/deployment-sample/istio/vm-workloadgroup.yaml
+
+    - name: Apply VM Service
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/deployment-sample/istio/vm-service.yaml
+
+    - name: Apply Auth Policies
+      kubernetes.core.k8s:
+        state: present
+        src: /tmp/deployment-sample/istio/auth-policy.yaml

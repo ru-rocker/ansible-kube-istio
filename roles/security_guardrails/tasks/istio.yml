@@ -36,7 +36,7 @@
     - security
     - guardrails
 
-- name: Security Guardrails | Enable Istio Sidecar Injection on Target Namespace
+- name: Security Guardrails | Enable Istio Ambient Mode on Target Namespace
   kubernetes.core.k8s:
     state: present
     definition:
@@ -45,7 +45,83 @@
       metadata:
         name: "{{ vm_namespace }}"
         labels:
-          istio-injection: enabled
+          istio.io/dataplane-mode: ambient
+          istio-injection: disabled
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - security
+    - guardrails
+
+- name: Security Guardrails | Enable Istio Ambient Mode on Client Namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: meshz-services
+        labels:
+          istio.io/dataplane-mode: ambient
+          istio-injection: disabled
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - security
+    - guardrails
+
+# The Waypoint→VM hop traverses the public internet as plaintext because
+# ztunnel/waypoint cannot establish HBONE tunnels to VM public IPs.
+# This namespace-level PERMISSIVE override allows the VM sidecar to
+# accept both mTLS (for future flat-network setups) and plaintext traffic.
+- name: Security Guardrails | Set PERMISSIVE mTLS for VM Namespace (Waypoint Compatibility)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: security.istio.io/v1beta1
+      kind: PeerAuthentication
+      metadata:
+        name: vm-namespace-permissive
+        namespace: "{{ vm_namespace }}"
+      spec:
+        mtls:
+          mode: PERMISSIVE
+  when:
+    - inventory_hostname in groups['control_plane']
+    - enforce_strict_mtls | bool
+  tags:
+    - security
+    - guardrails
+
+- name: Security Guardrails | Deploy Namespace Waypoint Proxy
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata:
+        name: waypoint
+        namespace: "{{ vm_namespace }}"
+        labels:
+          istio.io/waypoint-for: service
+      spec:
+        gatewayClassName: istio-waypoint
+        listeners:
+          - name: mesh
+            port: 15008
+            protocol: HBONE
+  when: inventory_hostname in groups['control_plane']
+  tags:
+    - security
+    - guardrails
+
+- name: Security Guardrails | Label VM Namespace to use Waypoint
+  kubernetes.core.k8s:
+    state: patched
+    kind: Namespace
+    name: "{{ vm_namespace }}"
+    definition:
+      metadata:
+        labels:
+          istio.io/use-waypoint: waypoint
   when: inventory_hostname in groups['control_plane']
   tags:
     - security
@@ -79,6 +155,7 @@
           labels:
             app: vm-proxy
             version: v1
+            istio.io/dataplane-mode: none
           annotations:
             traffic.sidecar.istio.io/includeInboundPorts: "{{ vm_inbound_ports }}"
             traffic.sidecar.istio.io/excludeInboundPorts: "22"
