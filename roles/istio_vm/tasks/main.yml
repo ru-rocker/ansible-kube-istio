@@ -295,14 +295,12 @@
     - vm_proxy
 
 # Configure routing so VM sidecar can communicate with cluster Pods/Services via private network interface
-- name: VM Proxy | Get Worker Node Private IP Fact
-  ansible.builtin.set_fact:
-    worker_private_ip: "{{ hostvars[groups['workers'][0]]['ansible_facts']['eth1']['ipv4']['address'] }}"
-  tags:
-    - vm_proxy
-
-- name: VM Proxy | Configure Static Routes to Cluster Networks via Worker Node Private IP
-  ansible.builtin.command: "ip route replace {{ item }} via {{ worker_private_ip }} dev eth1"
+- name: VM Proxy | Configure Static Routes to Cluster Networks via All Worker Node Private IPs (ECMP)
+  ansible.builtin.command: >
+    ip route replace {{ item }} dev eth1
+    {% for worker in groups['workers'] %}
+    nexthop via {{ hostvars[worker]['ansible_facts']['eth1']['ipv4']['address'] }} weight 1
+    {% endfor %}
   loop:
     - "{{ pod_network_cidr }}"
     - "10.96.0.0/12"
