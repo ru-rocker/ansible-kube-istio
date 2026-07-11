@@ -51,7 +51,7 @@ When the VM and the cluster nodes communicate over a flat private network (e.g.,
       │ (mTLS / HBONE on Port 15008)
       ▼
 [ Waypoint Proxy ] (Destination Namespace)
-      │ (mTLS/TCP on application port)
+      │ (mTLS / HBONE on Port 15008)
       ▼
 [ VM Sidecar (Envoy) ] (STRICT mode)
       │ (Localhost loopback)
