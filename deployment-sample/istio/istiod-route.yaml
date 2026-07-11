@@ -8,6 +8,7 @@ spec:
   - group: gateway.networking.k8s.io
     kind: Gateway
     name: cross-network-gateway
+    namespace: mesh-services
     sectionName: tls-istiod
   hostnames:
   - "istiod.istio-system.svc"

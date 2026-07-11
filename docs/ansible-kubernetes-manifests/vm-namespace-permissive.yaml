@@ -1,0 +1,8 @@
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: vm-namespace-permissive
+  namespace: "{{ vm_namespace }}" # Evaluated to your configured vm_namespace (e.g. mesh-services)
+spec:
+  mtls:
+    mode: PERMISSIVE

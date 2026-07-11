@@ -1,0 +1,15 @@
+apiVersion: kuma.io/v1alpha1
+kind: MeshTrafficPermission
+metadata:
+  name: deny-all
+  namespace: kuma-system
+  labels:
+    kuma.io/mesh: "{{ kuma_mesh }}"
+spec:
+  targetRef:
+    kind: Mesh
+  from:
+    - targetRef:
+        kind: Mesh
+      default:
+        action: Deny

@@ -34,7 +34,7 @@
 
     - name: Patch cross-network-gateway NodePort
       ansible.builtin.command: >
-        kubectl patch service cross-network-gateway-istio -n istio-system
+        kubectl patch service cross-network-gateway-istio -n mesh-services
         --type='merge' -p '{"spec": {"type": "NodePort", "ports": [{"name": "tls-istiod", "port": 15012, "nodePort": 30185}]}}'
 
     - name: Apply Istiod Route

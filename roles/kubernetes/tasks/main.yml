@@ -354,7 +354,6 @@
   changed_when: false
   when:
     - inventory_hostname in groups['control_plane']
-    - kubeadm_init is changed or not kube_initialized.stat.exists
   tags:
     - kubernetes
 

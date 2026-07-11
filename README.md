@@ -186,7 +186,7 @@ Configure the East-West Gateway, TLS routing, and VM WorkloadGroup for registrat
 kubectl apply -f deployment-sample/istio/eastwest-gateway.yaml
 
 # Patch the gateway to expose the bootstrap port (15012) on NodePort 30185
-kubectl patch service cross-network-gateway-istio -n istio-system --type='merge' -p '{"spec": {"type": "NodePort", "ports": [{"name": "tls-istiod", "port": 15012, "nodePort": 30185}]}}'
+kubectl patch service cross-network-gateway-istio -n mesh-services --type='merge' -p '{"spec": {"type": "NodePort", "ports": [{"name": "tls-istiod", "port": 15012, "nodePort": 30185}]}}'
 
 # Apply the TLS Route mapping for istiod
 kubectl apply -f deployment-sample/istio/istiod-route.yaml

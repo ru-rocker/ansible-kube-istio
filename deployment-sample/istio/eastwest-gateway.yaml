@@ -2,7 +2,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: cross-network-gateway
-  namespace: istio-system
+  namespace: mesh-services
   labels:
     istio: eastwestgateway
     topology.istio.io/network: cluster-network

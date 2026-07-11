@@ -1,0 +1,19 @@
+apiVersion: networking.istio.io/v1
+kind: WorkloadGroup
+metadata:
+  name: "{{ vm_auto_register_group }}" # e.g. vm-proxy-group
+  namespace: "{{ vm_namespace }}" # e.g. mesh-services
+spec:
+  metadata:
+    labels:
+      app: vm-proxy
+      version: v1
+      istio.io/dataplane-mode: none
+    annotations:
+      traffic.sidecar.istio.io/includeInboundPorts: "{{ vm_inbound_ports }}"
+      traffic.sidecar.istio.io/excludeInboundPorts: "22"
+  template:
+    serviceAccount: "{{ vm_service_account_name }}"
+    network: "{{ vm_network }}"
+    ports:
+      http: "{{ vm_inbound_ports | int }}"
