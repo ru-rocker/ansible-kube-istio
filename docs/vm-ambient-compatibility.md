@@ -18,7 +18,11 @@ Because native Ambient Mode (using shared node proxies) does not extend to VMs, 
 ## 2. Technical Architecture & Traffic Flow
 
 ### Inbound to VM (Cluster → VM Sidecar)
-Because the VM is resolved outside the cluster's internal Pod IP range, the Waypoint proxy connects to the VM's external IP via plaintext HTTP (due to ztunnel/waypoint being unable to form secure HBONE tunnels over public networks).
+
+The inbound traffic flow architecture depends on whether the VM is accessed across a public/NAT boundary or via a direct internal flat network:
+
+#### Scenario A: Public Internet or NAT Boundary (Plaintext HTTP/80 Fallback)
+Because the VM is resolved outside the cluster's internal Pod IP range and across NAT boundaries, the Waypoint proxy connects to the VM's external IP via plaintext HTTP (due to ztunnel/waypoint being unable to form secure HBONE tunnels over public/untrusted networks).
 
 ```
 [ Client Pod ] (Ambient Namespace)
@@ -31,6 +35,25 @@ Because the VM is resolved outside the cluster's internal Pod IP range, the Wayp
       │ (Plaintext HTTP/80 over Internet/NAT)
       ▼
 [ VM Sidecar (Envoy) ] (PERMISSIVE mode)
+      │ (Localhost loopback)
+      ▼
+[ Nginx Application ]
+```
+
+#### Scenario B: Private Internal / Flat Network (STRICT mTLS Best Practice)
+When the VM and the cluster nodes communicate over a flat private network (e.g., direct routing via VPC peering or shared subnets), the Waypoint proxy connects directly to the VM's internal IP using secure **mTLS** encryption.
+
+```
+[ Client Pod ] (Ambient Namespace)
+      │ (mTLS / HBONE on Port 15008)
+      ▼
+[ ztunnel ] (Client Node)
+      │ (mTLS / HBONE on Port 15008)
+      ▼
+[ Waypoint Proxy ] (Destination Namespace)
+      │ (mTLS/TCP on application port)
+      ▼
+[ VM Sidecar (Envoy) ] (STRICT mode)
       │ (Localhost loopback)
       ▼
 [ Nginx Application ]
@@ -65,6 +88,10 @@ Before starting, choose either **Option A (Direct Routing)** or **Option B (Priv
 
 ### Track A: Step-by-Step Setup for Option A (Direct Node Routing)
 Use this track if you want direct point-to-point network communication to Pod/Service CIDRs and are okay adding static IP routes to your VM's OS routing table.
+
+> [!TIP]
+> **Internal Network / Flat Network Compatibility:** Track A establishes a direct, flat private routing path between the VM and the cluster nodes. Because there are no NAT boundaries separating them, you can secure inbound traffic using **Option B (STRICT mTLS)** in Steps 4 and 5.
+
 
 #### 1. Configure Egress Routes on the VM
 Add routing rules directing cluster networks through the private IP of a cluster node:
@@ -152,7 +179,11 @@ spec:
       istio.io/dataplane-mode: none  # Enforces Sidecar-only behavior
 ```
 
-### Step 4: Configure Permissive Mutual TLS Policy
+### Step 4: Configure Mutual TLS (mTLS) Policy
+
+Depending on your network topology, select the appropriate configuration option:
+
+#### Option A: Over Public / NAT Boundaries (Plaintext Fallback)
 Because the inbound connection from the Waypoint Proxy to the VM sidecar is unencrypted plaintext, you must set `PERMISSIVE` mTLS for the VM's namespace to prevent the global `STRICT` policy from dropping the traffic:
 ```yaml
 apiVersion: security.istio.io/v1beta1
@@ -167,7 +198,24 @@ spec:
 > [!IMPORTANT]
 > Since the VM connects from a NAT environment, its workload labels are not fully resolved by `istiod`. The PeerAuthentication policy **must not** contain a `selector` block and must be applied namespace-wide.
 
+#### Option B: Private Internal / Flat Network (STRICT mTLS Best Practice)
+If the VM and cluster communicate directly over a flat internal private network, we can secure all traffic using **STRICT** mTLS:
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: vm-namespace-strict
+  namespace: mesh-services
+spec:
+  mtls:
+    mode: STRICT # Enforces mutual TLS for all incoming VM traffic
+```
+
 ### Step 5: Update the Authorization Policy
+
+Depending on your network topology:
+
+#### Option A: Over Public / NAT Boundaries (Plaintext Fallback)
 Because Waypoint-to-VM traffic is plaintext, it does not carry a SPIFFE identity. The destination AuthorizationPolicy must contain a secondary rule to allow unauthenticated traffic on the application port (e.g., port 80):
 ```yaml
 apiVersion: security.istio.io/v1beta1
@@ -186,6 +234,25 @@ spec:
   - to:                                # Rule 2: Unauthenticated Waypoint proxy (Plaintext)
     - operation: { ports: ["80"] }
 ```
+
+#### Option B: Private Internal / Flat Network (STRICT mTLS Best Practice)
+When operating over a flat internal network, the Waypoint proxy's mTLS identity (`waypoint` ServiceAccount) is presented and validated. You should enforce strict access control and **remove the plaintext/unauthenticated bypass**:
+```yaml
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: vm-proxy-policy
+  namespace: mesh-services
+spec:
+  action: ALLOW
+  rules:
+  - from:                              # Only allow authenticated traffic from the Waypoint
+    - source:
+        principals: ["cluster.local/ns/mesh-services/sa/waypoint"]
+    to:
+    - operation: { ports: ["80"] }
+```
+
 
 ---
 
