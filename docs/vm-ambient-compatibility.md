@@ -308,3 +308,28 @@ Onboarding existing, high-scale VM infrastructure into a service mesh introduces
 * **The Reality:** Traditional VM workloads often run stateful runtimes (e.g. WildFly, JBoss, WebLogic, Oracle Database) with long-lived connection pools.
 * **The Risk:** Envoy sidecars aggressively prune idle TCP connections and enforce strict HTTP/2 keep-alive requirements. Runtimes with static JDBC/JMS connection pools are highly sensitive to these TCP terminations, leading to sudden, hard-to-debug database connection drops and application runtime errors.
 
+---
+
+## 7. Multi-Tenant Single Namespace Scope & Permissions
+
+If you operate in a restricted multi-tenant cluster where you only have read/write access to your designated application namespace (e.g., `mesh-services`) and **no access to `istio-system`**, the hybrid VM-Ambient integration remains fully supported.
+
+### A. Summary of Namespace-Scoped Operations
+All resources generated and applied during this setup are restricted to your local namespace boundaries:
+
+| Resource / Action | Namespace Scope | Permission Required |
+|---|---|---|
+| **Waypoint Proxy (`Gateway`)** | `mesh-services` | Gateway creator in application namespace |
+| **WorkloadGroup / WorkloadEntry** | `mesh-services` | Write access to Istio networking CRDs |
+| **PeerAuthentication** | `mesh-services` | Write access to Istio security CRDs |
+| **AuthorizationPolicy** | `mesh-services` | Write access to Istio security CRDs |
+| **Root Cert ConfigMap Read** | `mesh-services` | Read access to ConfigMaps in own namespace |
+| **ServiceAccount Token Generation** | `mesh-services` | `create` action on `/serviceaccounts/token` subresource |
+
+### B. Why it Works Without Cluster Admin Access
+1. **Flat Internal Network Isolation:** Because direct routing is established (Track A), you do not need to deploy or modify cross-network gateways in `istio-system`. No changes to global services are required.
+2. **Local CA Cert Injection:** The ConfigMap `istio-ca-root-cert` is automatically injected and updated by the Istio control plane into every namespace. You can read it directly from `mesh-services` without needing access to `istio-system` secrets.
+3. **Local Token Auditing:** The token required by the VM sidecar is requested for your namespace's ServiceAccount (`vm-proxy-sa`), which is validated by `istiod` against your namespace metadata.
+4. **Control Plane Connectivity:** The VM reaches the central control plane `istiod.istio-system.svc.cluster.local:15012` over the private network. This requires network connectivity to the cluster IP, but requires zero RBAC modifications or administrative API changes within `istio-system`.
+
+
